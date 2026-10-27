@@ -65,7 +65,9 @@ enum GGUFFile {
     static func totalSize(at path: String) -> UInt64? {
         let url = URL(fileURLWithPath: path).standardizedFileURL
         if shardInfo(url.path) == nil {
-            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            // attributesOfItem describes a symlink, not the model behind it.
+            let target = url.resolvingSymlinksInPath()
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: target.path),
                   let size = (attributes[.size] as? NSNumber)?.uint64Value else { return nil }
             return size
         }

@@ -35,7 +35,10 @@ struct LocalModel: Identifiable, Hashable, Sendable {
 
     nonisolated static func models(from files: [URL]) -> [LocalModel] {
         let entries = files.map { url in
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            // A symlink reports the size of the link target path, not of the
+            // model, so probe the resolved file.
+            let size = (try? url.resolvingSymlinksInPath()
+                .resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
             return GGUFFileEntry(path: url.path, sizeBytes: size)
         }
         return GGUFFile.models(from: entries)

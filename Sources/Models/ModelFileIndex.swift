@@ -34,7 +34,13 @@ struct ModelFileIndex: Sendable {
 
         var files: [URL] = []
         for case let url as URL in enumerator {
-            guard let values = try? url.resourceValues(forKeys: keys),
+            // A model can be a symlink into the central store. The resource
+            // values of a symlink describe the link itself, not the file it
+            // points at, so resolve it first: otherwise isRegularFile comes
+            // back false and the size is the length of the link target, and
+            // the model reads as missing.
+            let resolved = url.resolvingSymlinksInPath()
+            guard let values = try? resolved.resourceValues(forKeys: keys),
                   values.isRegularFile == true,
                   (values.fileSize ?? 0) > 0,
                   modelExtensions.contains(url.pathExtension.lowercased()) else { continue }
