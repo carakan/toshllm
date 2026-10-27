@@ -283,6 +283,26 @@ final class ModelDetectionTests: XCTestCase {
                        preferred.path)
     }
 
+    func testRecursiveFileIndexFindsAModelThatIsASymlink() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = dir.appendingPathComponent("store", isDirectory: true)
+        let managed = dir.appendingPathComponent("imagen", isDirectory: true)
+        try FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: true)
+        let real = store.appendingPathComponent("z_image_turbo-Q4_0.gguf")
+        try Data([1, 2, 3, 4]).write(to: real)
+        let link = managed.appendingPathComponent("z_image_turbo-Q4_0.gguf")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+        // The resource values of a symlink describe the link and not the model
+        // behind it, so the scan has to resolve it. Otherwise the model reads
+        // as missing and the app offers to download it again.
+        let index = ModelFileIndex.scan(in: dir)
+        XCTAssertEqual(index.file(named: "z_image_turbo-Q4_0.gguf", preferredDirectory: managed)?.path,
+                       link.path)
+    }
+
     func testEmbeddedNameKeepsFilenameSizeAndDropsRepositoryOwner() throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
