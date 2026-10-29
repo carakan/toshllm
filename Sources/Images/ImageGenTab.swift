@@ -1038,7 +1038,11 @@ struct ImageInstanceForm: View {
             if let item = models.imageDownload(fileName: comp.fileName) {
                 InlineDownloadProgress(item: item)
             } else if !present {
-                Text(String(format: "%.1f GB", comp.sizeGB))
+                // A small file, such as the tokenizer Qwen3.5 needs, would read
+                // "0.0 GB" at one decimal.
+                Text(comp.sizeGB < 0.1
+                     ? String(format: "%.0f MB", comp.sizeGB * 1000)
+                     : String(format: "%.1f GB", comp.sizeGB))
                     .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
             }
         }

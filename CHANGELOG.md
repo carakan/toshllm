@@ -11,7 +11,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- **Images: the engine moves to upstream master,** which also brings FLUX.3 and Chroma.
+- **Images: the image engine's stable-diffusion.cpp half moves to upstream master,** which also brings FLUX.3 and Chroma; its Metal backend stays on the ggml commit the AMD patches were written against.
 
 ### Fixed
 
