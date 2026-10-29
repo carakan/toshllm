@@ -423,15 +423,19 @@ enum ImageGenCatalog {
     /// engine knows; Qwen3.5 has its own vocabulary, so it needs the external tokenizer.
     static let mossImageSFT = ImageGenModel(
         name: "MOSS-Image SFT",
-        detailES: "5B, el modelo más nuevo de MOSS. Calidad alta; el codificador Qwen3.5 va a la CPU.",
-        detailEN: "5B, the newest MOSS model. High quality; the Qwen3.5 encoder runs on the CPU.",
+        detailES: "5B, el modelo más nuevo de MOSS. Calidad alta; necesita el VAE de FLUX.2 y un codificador Qwen3.5 9B.",
+        detailEN: "5B, the newest MOSS model. High quality; needs the FLUX.2 VAE and a Qwen3.5 9B encoder.",
         components: [
             ImageGenComponent(kind: .diffusion,
                 urlString: "https://huggingface.co/leejet/MOSS-Image-SFT-GGUF/resolve/main/MOSS-Image-SFT-Q4_K.gguf",
                 fileName: "MOSS-Image-SFT-Q4_K.gguf", sizeGB: 3.33),
+            // The small FLUX.2 VAE, not the full one: the full decoder smears
+            // the top of the image into mush on this ggml, which is pinned
+            // before upstream moved the flash-attention kernels into per-type
+            // files. The small one decodes it correctly.
             ImageGenComponent(kind: .vae,
-                urlString: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/vae/flux2-vae.safetensors",
-                fileName: "flux2-vae.safetensors", sizeGB: 0.34),
+                urlString: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/vae/flux2-vae_small.safetensors",
+                fileName: "flux2-vae_small.safetensors", sizeGB: 0.23),
             ImageGenComponent(kind: .textEncoder,
                 urlString: "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
                 fileName: "Qwen3.5-9B-Q4_K_M.gguf", sizeGB: 5.68),
