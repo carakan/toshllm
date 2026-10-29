@@ -474,6 +474,7 @@ final class ModelStore: ObservableObject {
         let dest = dir.appendingPathComponent(fileName)
         let names = componentNames(fileName: fileName, remote: remote, former: formerFileNames)
         if fileIndex?.file(namedAny: names, preferredDirectory: dir) != nil { return }
+        if fileIndex?.sidecar(namedAny: names, preferredDirectory: dir) != nil { return }
         let key = fileName.precomposedStringWithCanonicalMapping.lowercased()
         guard !componentChecks.contains(key),
               !downloads.contains(where: { $0.destination == dest && $0.error == nil }) else { return }
@@ -483,7 +484,9 @@ final class ModelStore: ObservableObject {
         // on the main actor or starting a duplicate transfer.
         Task { [weak self] in
             let existing = await Task.detached(priority: .utility) {
-                ModelFileIndex.scan(in: root).file(namedAny: names, preferredDirectory: dir)
+                let index = ModelFileIndex.scan(in: root)
+                return index.file(namedAny: names, preferredDirectory: dir)
+                    ?? index.sidecar(namedAny: names, preferredDirectory: dir)
             }.value
             guard let self else { return }
             componentChecks.remove(key)
@@ -507,9 +510,11 @@ final class ModelStore: ObservableObject {
             return FileManager.default.fileExists(atPath: url.path) ? url : nil
         }
         let remote = URL(string: component.urlString)
-        return fileIndex?.file(namedAny: componentNames(fileName: component.fileName, remote: remote,
-                                                        former: component.formerFileNames),
-                                preferredDirectory: imagenDirectory)
+        let names = componentNames(fileName: component.fileName, remote: remote, former: component.formerFileNames)
+        if let match = fileIndex?.file(namedAny: names, preferredDirectory: imagenDirectory) { return match }
+        // A component can be a sidecar file rather than a model, e.g. the
+        // tokenizer.json Qwen3.5 needs, and those are not in the model index.
+        return fileIndex?.sidecar(namedAny: names, preferredDirectory: imagenDirectory)
     }
 
     private func componentNames(fileName: String, remote: URL?, former: [String] = []) -> [String] {
