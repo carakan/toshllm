@@ -1,27 +1,16 @@
 diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_image_2_1.hpp
-index a6a6b21..dcef1aa 100644
 --- a/src/model/diffusion/qwen_image_2_1.hpp
 +++ b/src/model/diffusion/qwen_image_2_1.hpp
-@@ -314,16 +314,22 @@ namespace Qwen {
-                     gate         = parts[0];
-                     h            = parts[1];
-                 } else {
-                     gate = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.gate_layer"])->forward(ctx, h);
-                     h    = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.proj"])->forward(ctx, h);
-                 }
-                 h = ggml_mul(ctx->ggml_ctx, h, ggml_silu(ctx->ggml_ctx, gate));
-             }
+@@ -318,6 +318,12 @@
+                 auto gate = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.gate_layer"])->forward(ctx, h);
+                 h         = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.proj"])->forward(ctx, h);
+                 h         = ggml_swiglu_split(ctx->ggml_ctx, gate, h);
++            }
 +            // the tile loader rounds activations to half anyway; narrowing first halves the
 +            // bytes the down projection re-reads for every row block
 +            static const bool down_f16_off = getenv("TOSH_QWEN21_DOWN_F16_DISABLE") != nullptr;
 +            if (!down_f16_off && h->type == GGML_TYPE_F32) {
 +                h = ggml_cast(ctx->ggml_ctx, h, GGML_TYPE_F16);
-+            }
+             }
              h = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.out"])->forward(ctx, h);
-             return ggml_add(ctx->ggml_ctx, x, modulate(ctx->ggml_ctx, h, modulation[3], prefix_length, true));
-         }
-     };
- 
-     class QwenImage21Model : public GGMLBlock {
-         QwenImage21Config config;
- 
+             return ggml_add(ctx->ggml_ctx, x, modulate(ctx, h, modulation[3], prefix_length, true));
