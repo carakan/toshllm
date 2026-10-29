@@ -1,0 +1,57 @@
+--- a/ggml/include/ggml.h
++++ b/ggml/include/ggml.h
+@@ -1451,6 +1451,19 @@
+             struct ggml_tensor * a,
+             enum ggml_prec       prec);
+ 
++    // set the minimum required accumulator type for the implementation to use during the compute
++    // for example:
++    //  - GGML_PREC_F32  - requires accumulation of the results in F32
++    //  - GGML_PREC_BF16 - can accumulate the results in BF16, F32
++    //  - GGML_PREC_F16  - can accumulate the results in F16, F32
++    //  - GGML_PREC_Q8   - not allowed
++    //  - GGML_PREC_Q4   - not allowed
++    //
++    // return false on failure
++    GGML_API bool ggml_prec_set_acc(
++            struct ggml_tensor * a,
++            enum ggml_prec       prec);
++
+     // change the hint of a matrix multiplication
+     GGML_API void ggml_mul_mat_set_hint(
+             struct ggml_tensor * a,
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -3370,6 +3370,32 @@
+     ggml_set_op_params_i32(a, 0, prec_i32);
+ }
+ 
++// sets the accumulator precision for the ops that take one; the callers in
++// stable-diffusion.cpp use this instead of the per-op setters above
++bool ggml_prec_set_acc(
++        struct ggml_tensor * a,
++        enum ggml_prec       prec) {
++    switch (a->op) {
++        case GGML_OP_MUL_MAT:
++        case GGML_OP_MUL_MAT_ID:
++            {
++                const int32_t prec_i32 = (int32_t) prec;
++                ggml_set_op_params_i32(a, 0, prec_i32);
++            }
++            break;
++        case GGML_OP_FLASH_ATTN_EXT:
++            {
++                const int32_t prec_i32 = (int32_t) prec;
++                ggml_set_op_params_i32(a, 3, prec_i32);
++            }
++            break;
++        default:
++            return false;
++    }
++
++    return true;
++}
++
+ void ggml_mul_mat_set_hint(
+         struct ggml_tensor * a,
+         enum ggml_op_hint    hint) {
