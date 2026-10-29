@@ -13,6 +13,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **Images: the engine moves to upstream master,** which also brings FLUX.3 and Chroma.
 
+### Fixed
+
+- **Models: a model that is a symlink into the central store is found again and reads with the size of the file behind it,** instead of the size of the link; a file that goes with a model, such as the tokenizer of Qwen3.5, is found without becoming a model of its own, and a tokenizer.json that belongs to another model is never used as its vocabulary.
+
 ## [0.87.30] - 2026-10-28
 
 ### Added

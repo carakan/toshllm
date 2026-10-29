@@ -77,7 +77,9 @@ enum GGUFFile {
             options: [.skipsHiddenFiles]) else { return nil }
         let entries = files.compactMap { file -> GGUFFileEntry? in
             guard file.pathExtension.lowercased() == "gguf",
-                  let values = try? file.resourceValues(forKeys: [.fileSizeKey]),
+                  // A symlinked shard describes the link, not the model behind
+                  // it, so the size is read from the resolved file.
+                  let values = try? file.resolvingSymlinksInPath().resourceValues(forKeys: [.fileSizeKey]),
                   let size = values.fileSize else { return nil }
             return GGUFFileEntry(path: file.standardizedFileURL.path, sizeBytes: Int64(size))
         }
