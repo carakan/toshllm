@@ -1,51 +1,7 @@
-diff --git a/src/core/ggml_extend.cpp b/src/core/ggml_extend.cpp
-index c329a34..46e3d54 100644
---- a/src/core/ggml_extend.cpp
-+++ b/src/core/ggml_extend.cpp
-@@ -678,27 +678,31 @@ ggml_tensor* ggml_ext_attention_ext(ggml_context* ctx,
-         if (pad_head) {
-             // CUDA FA MMA starts at 64 channels; keep the original head's attention scale.
-             q_in = ggml_pad(ctx, q_in, 64 - d_head, 0, 0, 0);
-             k_in = ggml_pad(ctx, k_in, 64 - d_head, 0, 0, 0);
-         }
-         if (kv_scale != 1.0f) {
-             k_in = ggml_ext_scale(ctx, k_in, kv_scale);
-         }
--        k_in = ggml_cast(ctx, k_in, GGML_TYPE_F16);
-+        if (k_in->type != GGML_TYPE_F16) {
-+            k_in = ggml_cast(ctx, k_in, GGML_TYPE_F16);
-+        }
- 
-         v_in = ggml_ext_cont(ctx, ggml_permute(ctx, v_in, 0, 2, 1, 3));
-         v_in = ggml_reshape_3d(ctx, v_in, d_head, L_k, n_kv_head * N);
-         if (pad_head) {
-             v_in = ggml_pad(ctx, v_in, 64 - d_head, 0, 0, 0);
-         }
-         if (kv_scale != 1.0f) {
-             v_in = ggml_ext_scale(ctx, v_in, kv_scale);
-         }
--        v_in = ggml_cast(ctx, v_in, GGML_TYPE_F16);
-+        if (v_in->type != GGML_TYPE_F16) {
-+            v_in = ggml_cast(ctx, v_in, GGML_TYPE_F16);
-+        }
- 
-         if (mask_in != nullptr) {
-             // ggml_flash_attn_ext expects the mask as a contiguous F16 tensor shaped
-             // [n_kv, n_q, (heads), (batch)] (ne0 = key length, ne1 = query length) and,
-             // unlike the manual-attention path, does not broadcast the query dimension.
-             // Some callers (e.g. Chroma/T5) pass a per-key padding mask broadcast over
-             // queries ([n_kv, 1, ...]); materialize the query dimension to L_q so the
-             // kernel indexes it correctly. (A bare ggml_transpose here produced a
 diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_image_2_1.hpp
-index 7079844..a6a6b21 100644
 --- a/src/model/diffusion/qwen_image_2_1.hpp
 +++ b/src/model/diffusion/qwen_image_2_1.hpp
-@@ -221,16 +221,24 @@ namespace Qwen {
-                 }
-                 return out;
-             };
-             ggml_tensor* result = nullptr;
-             if (cache.mode == QwenImage21PrefixCache::Mode::REUSE) {
+@@ -227,6 +227,14 @@
                  auto prefix_k = ctx->load_cache_tensor(cache.name + ".k");
                  auto prefix_v = ctx->load_cache_tensor(cache.name + ".v");
                  GGML_ASSERT(prefix_k != nullptr && prefix_v != nullptr);
@@ -60,8 +16,17 @@ index 7079844..a6a6b21 100644
                  if (prefix_k->type != k->type) {
                      prefix_k = ggml_cast(ctx->ggml_ctx, prefix_k, k->type);
                  }
-                 if (prefix_v->type != v->type) {
-                     prefix_v = ggml_cast(ctx->ggml_ctx, prefix_v, v->type);
-                 }
-                 prefix_k = ggml_reshape_4d(ctx->ggml_ctx, prefix_k, dim_head, cache.prefix_length, heads, k->ne[3]);
-                 prefix_v = ggml_reshape_4d(ctx->ggml_ctx, prefix_v, dim_head, heads, cache.prefix_length, v->ne[3]);
+diff --git a/src/core/ggml_extend.cpp b/src/core/ggml_extend.cpp
+--- a/src/core/ggml_extend.cpp
++++ b/src/core/ggml_extend.cpp
+@@ -683,7 +683,9 @@
+         if (kv_scale != 1.0f) {
+             k_in = ggml_ext_scale(ctx, k_in, kv_scale);
+         }
+-        k_in = ggml_cast(ctx, k_in, GGML_TYPE_F16);
++        if (k_in->type != GGML_TYPE_F16) {
++            k_in = ggml_cast(ctx, k_in, GGML_TYPE_F16);
++        }
+ 
+         if (kv_scale != 1.0f) {
+             v_in = ggml_ext_scale(ctx, v_in, kv_scale);

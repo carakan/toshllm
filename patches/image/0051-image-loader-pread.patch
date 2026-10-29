@@ -1,35 +1,14 @@
 diff --git a/src/model_loader.cpp b/src/model_loader.cpp
-index ee5aa49..b3ac097 100644
+index bc6265f..199a175 100644
 --- a/src/model_loader.cpp
 +++ b/src/model_loader.cpp
-@@ -10,16 +10,19 @@
- #include <regex>
- #include <set>
- #include <stdexcept>
- #include <string>
- #include <thread>
- #include <unordered_map>
- #include <vector>
+@@ -18,2 +18,5 @@
  
 +#include <fcntl.h>
 +#include <unistd.h>
 +
  #include "core/util.h"
- #include "model_io/gguf_io.h"
- #include "model_io/safetensors_io.h"
- #include "model_io/torch_legacy_io.h"
- #include "model_io/torch_zip_io.h"
- #include "model_loader.h"
- #include "runtime/imatrix.h"
- #include "stable-diffusion.h"
-@@ -1054,28 +1057,37 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
- 
-         std::atomic<size_t> tensor_idx(0);
-         std::atomic<bool> failed(false);
-         std::vector<std::thread> workers;
-         std::mutex backend_tensor_set_mutex;
- 
-         for (int i = 0; i < n_threads; ++i) {
+@@ -1159,3 +1162,12 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
              workers.emplace_back([&, file_path, is_zip]() {
 -                std::ifstream file;
 +                // pread, not ifstream: stdio refills in st_blksize units (4 KiB here), which
@@ -43,34 +22,14 @@ index ee5aa49..b3ac097 100644
 +                    }
 +                } posix_file;
                  zip_t* zip = nullptr;
-                 if (is_zip) {
-                     zip = zip_open(file_path.c_str(), 0, 'r');
-                     if (zip == nullptr) {
-                         LOG_ERROR("failed to open zip '%s'", file_path.c_str());
-                         failed = true;
-                         return;
-                     }
+@@ -1169,4 +1181,4 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
                  } else if (!mmapped) {
--                    file.open(file_path, std::ios::binary);
+-                    file.open(std::filesystem::u8path(file_path), std::ios::binary);
 -                    if (!file.is_open()) {
 +                    posix_file.fd = open(file_path.c_str(), O_RDONLY);
 +                    if (posix_file.fd < 0) {
                          LOG_ERROR("failed to open '%s'", file_path.c_str());
-                         failed = true;
-                         return;
-                     }
-                 }
- 
-                 std::vector<uint8_t> read_buffer;
-                 std::vector<uint8_t> convert_buffer;
-@@ -1159,21 +1171,27 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
-                             }
-                             zip_entry_close(zip);
-                         } else if (mmapped) {
-                             if (!mmapped->copy_data(buf, n, tensor_storage.offset)) {
-                                 LOG_ERROR("read tensor data failed: '%s'", file_path.c_str());
-                                 return false;
-                             }
+@@ -1269,7 +1281,13 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
                          } else {
 -                            file.seekg(tensor_storage.offset);
 -                            file.read(buf, n);
@@ -89,10 +48,3 @@ index ee5aa49..b3ac097 100644
 +                                }
 +                                done += (size_t)got;
                              }
-                         }
-                         return true;
-                     };
- 
-                     char* read_buf    = nullptr;
-                     char* target_buf  = nullptr;
-                     char* convert_buf = nullptr;
