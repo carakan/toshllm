@@ -3,6 +3,16 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **Images: MOSS-Image SFT.** A 5B model that follows prompts and edits from reference images, with the FLUX.2 VAE and a Qwen3.5 9B text encoder. On a Radeon RX 6800 XT a 1024x1024 image takes about 4 min 30 s at 20 steps.
+
+### Changed
+
+- **Images: the engine moves to upstream master,** which also brings FLUX.3 and Chroma.
+
 ## [0.87.32] - 2026-11-02
 
 ### Added
@@ -20,7 +30,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **LLMs: the hybrid Qwen models answer a follow-up the same as they would reading the conversation from scratch.** The copies of their state kept between messages were rounded to 8 bits, which changed later answers; they are now exact while memory allows, and drop to 8 bits only when it is short.
 - **Chat: a finished answer that takes long to draw, such as a large table, no longer stops the engine as if it had hung (#146).**
-
 ## [0.87.31] - 2026-10-29
 
 ### Improved
@@ -39,7 +48,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **LLMs: Qwen3.8-Flash-Next and other models with a gated shared expert load again with TensorMesh,** where 0.87.30 stopped the engine as soon as it generated its first token.
 - **LLMs: a model with an MTP head starts without it when there is no room for the head, instead of the engine stopping with "failed to create MTP context".**
-
 ## [0.87.30] - 2026-10-28
 
 ### Added
@@ -71,7 +79,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **The web chat builds from source again with npm 10,** whose `npm ci` stopped on a package missing from the lock file. Reported by [Basten7](https://github.com/Basten7) in [#142](https://github.com/engeldlgado/toshllm/issues/142).
 - **Buttons and descriptions that were cut are whole again,** such as Attach file and Suggestions on an empty chat, the library's description and the About credits.
 - **The system card's cores and threads and a server's context in Logs are translated.**
-
 ## [0.87.29] - 2026-10-22
 
 ### Fixed
