@@ -3,6 +3,16 @@
 All notable changes to ToshLLM are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **Images: MOSS-Image SFT.** A 5B model that follows prompts and edits from reference images, with the FLUX.2 VAE and a Qwen3.5 9B text encoder. On a Radeon RX 6800 XT a 1024x1024 image takes about 4 min 30 s at 20 steps.
+
+### Changed
+
+- **Images: the engine moves to upstream master,** which also brings FLUX.3 and Chroma.
+
 ## [0.87.30] - 2026-10-28
 
 ### Added
@@ -34,7 +44,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **The web chat builds from source again with npm 10,** whose `npm ci` stopped on a package missing from the lock file. Reported by [Basten7](https://github.com/Basten7) in [#142](https://github.com/engeldlgado/toshllm/issues/142).
 - **Buttons and descriptions that were cut are whole again,** such as Attach file and Suggestions on an empty chat, the library's description and the About credits.
 - **The system card's cores and threads and a server's context in Logs are translated.**
-
 ## [0.87.29] - 2026-10-22
 
 ### Fixed
