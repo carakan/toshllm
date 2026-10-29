@@ -1,10 +1,8 @@
-diff --git a/src/runtime/tiling.cpp b/src/runtime/tiling.cpp
-index f0a9dbc..66cfeee 100644
 --- a/src/runtime/tiling.cpp
 +++ b/src/runtime/tiling.cpp
-@@ -1,12 +1,15 @@
+@@ -1,7 +1,10 @@
  #include "runtime/tiling.h"
- 
+
  #include <algorithm>
 +#include <chrono>
  #include <cstdint>
@@ -12,20 +10,10 @@ index f0a9dbc..66cfeee 100644
 +#include <thread>
  #include <utility>
  #include <vector>
- 
- #include "core/util.h"
- #include "ggml.h"
- 
- static void sd_tiling_calc_tiles(int& num_tiles_dim,
-                                  float& tile_overlap_factor_dim,
-@@ -249,16 +252,22 @@ sd::Tensor<float> process_tiles_2d(const sd::Tensor<float>& input,
-             }
-             sd_tensor_merge_2d(output_tile, &output, x_out, y_out, overlap_x_out, overlap_y_out, circular_x, circular_y, dx, dy);
- 
+
+@@ -202,6 +205,12 @@
              if (!silent) {
-                 int64_t t2 = ggml_time_ms();
-                 last_time  = (t2 - t1) / 1000.0f;
-                 pretty_progress(tile_count, num_tiles, last_time);
+                 pretty_progress(tile_count, num_tiles, (ggml_time_ms() - t1) / 1000.0f);
              }
 +            if (const char* value = getenv("TOSH_VAE_TILE_YIELD_MS")) {
 +                const long delay_ms = std::clamp(strtol(value, nullptr, 10), 0L, 1000L);
@@ -33,11 +21,6 @@ index f0a9dbc..66cfeee 100644
 +                    std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
 +                }
 +            }
-             tile_count++;
          }
-         last_x = false;
      }
-     if (!silent && tile_count < num_tiles) {
-         pretty_progress(num_tiles, num_tiles, last_time);
-     }
-     if (output.empty()) {
+     return output;
