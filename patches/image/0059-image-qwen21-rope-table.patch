@@ -309,33 +309,21 @@ index e2b53a6..b977f11 100644
          int                   n_dims,
          int                   sections[GGML_MROPE_SECTIONS],
          int                   mode,
-diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_image_2_1.hpp
-index 0c1ade4..7079844 100644
 --- a/src/model/diffusion/qwen_image_2_1.hpp
 +++ b/src/model/diffusion/qwen_image_2_1.hpp
-@@ -183,18 +183,23 @@ namespace Qwen {
-                 auto h = std::dynamic_pointer_cast<Linear>(blocks[name])->forward(ctx, x);
-                 return ggml_reshape_4d(ctx->ggml_ctx, h, dim_head, heads, x->ne[1], x->ne[2]);
-             };
-             auto q = project("to_q");
-             auto k = project("to_k");
+@@ -189,8 +189,13 @@
              auto v = project("to_v");
              q      = std::dynamic_pointer_cast<RMSNorm>(blocks["norm_q"])->forward(ctx, q);
              k      = std::dynamic_pointer_cast<RMSNorm>(blocks["norm_k"])->forward(ctx, k);
--            q      = Rope::apply_rope(ctx->ggml_ctx, q, pe);
--            k      = Rope::apply_rope(ctx->ggml_ctx, k, pe);
+-            q      = Rope::apply_rope(ctx, q, pe);
+-            k      = Rope::apply_rope(ctx, k, pe);
 +            // one pass over the table instead of the generic permute/repeat/mul/add chain
 +            static const bool rope_table_off = getenv("TOSH_QWEN21_ROPE_TABLE_DISABLE") != nullptr;
 +            auto rope = [&](ggml_tensor* t) {
-+                return rope_table_off ? Rope::apply_rope(ctx->ggml_ctx, t, pe) : ggml_rope_table(ctx->ggml_ctx, t, pe);
++                return rope_table_off ? Rope::apply_rope(ctx, t, pe) : ggml_rope_table(ctx->ggml_ctx, t, pe);
 +            };
 +            q      = rope(q);
 +            k      = rope(k);
              if (cache.mode == QwenImage21PrefixCache::Mode::STORE) {
                  // Preserve query-first attention evaluation while writing each layer's
                  // prefix before its full-sequence K/V can accumulate across layers.
-                 ctx->expand_graph(q);
-                 auto persist = [&](ggml_tensor* tensor, int axis, const char* name) {
-                     auto part = ggml_ext_slice(ctx->ggml_ctx, tensor, axis, 0, cache.prefix_length);
-                     // Pack the contiguous data into wider rows so quantization blocks
-                     // can exceed head_dim without padding or changing element order.

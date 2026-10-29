@@ -13,7 +13,13 @@ ROOT="$PWD"
 
 LLAMA_COMMIT="${LLAMA_COMMIT:-d81235049384534c167caea52b85a694f6103d14}"   # llama.cpp commit validated against the patches
 WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # whisper.cpp v1.9.3
-SD_COMMIT="${SD_COMMIT:-2f88688}"         # stable-diffusion.cpp commit validated for image gen
+SD_COMMIT="${SD_COMMIT:-77b72a2efed78f55de26892c7e909cee001e8b83}"  # stable-diffusion.cpp commit validated for image gen
+# The image engine stays on the ggml commit its Metal patches were written against: upstream
+# split ggml-metal.metal into kernels/ and moved the flash-attention kernels into per-type
+# files, so the AMD backend would have to be rewritten for it. The sd.cpp code above moves
+# forward independently, and the few ggml APIs it needs that are newer than this commit
+# (ggml_prec_set_acc) are backported by patches/image/0068.
+GGML_COMMIT="${GGML_COMMIT:-4bf5f6000653b7881d00963cd6ddb665ccd62a8d}"
 ARCH="${ARCH:-$(uname -m)}"
 DEPLOYMENT_TARGET="14.0"        # same floor as the app (Package.swift)
 if [ "$ARCH" = "universal" ]; then
@@ -285,6 +291,10 @@ build_image_engine() {
     git submodule sync --recursive
     retry_git env GIT_HTTP_LOW_SPEED_LIMIT=2000 GIT_HTTP_LOW_SPEED_TIME=30 \
         git submodule update --init --recursive
+    # The image engine keeps the ggml commit its patches target; the newer one upstream
+    # points at split the Metal backend into kernels/ that the AMD backend does not match.
+    retry_git git -C ggml fetch -q origin "$GGML_COMMIT" 2>/dev/null || true
+    git -C ggml checkout -qf "$GGML_COMMIT"
     git checkout -- . 2>/dev/null || true
     git -C ggml checkout -- . 2>/dev/null || true
 
@@ -316,8 +326,9 @@ build_image_engine() {
     git apply --include='ggml/src/ggml-metal/ggml-metal-impl.h' -C2 -p1 \
               "$ROOT/patches/shared-metal/0001-7-metal-backend-host.patch"
     git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0003-image-metal-ncb.patch"
-    # sd.cpp core (outside the ggml submodule): per-op CPU fallback for wave64.
-    git apply -p1 "$ROOT/patches/image/0004-image-cpu-fallback-sched.patch"
+    # sd.cpp core (outside the ggml submodule): the per-op CPU fallback for wave64 is gone.
+    # It hooked into ComputeWorkspace::needs_scheduler(), which upstream deleted: the scheduler
+    # path is now unconditional, so there is no condition left to force.
     git apply -p1 "$ROOT/patches/image/0008-image-ext-wave64.patch"
     # after 0008: both edit ggml-metal.metal and ggml-metal-ops.cpp, and 0021 was
     # generated on top of it. Without a Metal im2col_3d, ggml_conv_3d falls back to
@@ -378,6 +389,13 @@ build_image_engine() {
     # Large matrix products walk their tiles in bands of src1 that stay in the cache;
     # TOSH_MM_BAND_MB=0 restores the plain order.
     git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0067-image-metal-mm-band.patch"
+    # ggml_prec_set_acc: the sd.cpp code of the newer upstream asks for an accumulator
+    # precision, and this ggml only has the two per-op setters it replaces.
+    git apply --include='ggml/include/ggml.h' --include='ggml/src/ggml.c' -p1 "$ROOT/patches/image/0068-image-ggml-prec-set-acc.patch"
+    # ggml_rope_apply: the newer sd.cpp code applies precomputed rotary matrices with it. The
+    # op does not exist in this ggml, so the CPU implementation is backported; the Metal
+    # backend reports the op unsupported and the scheduler runs it on the CPU.
+    git apply --include='ggml/include/ggml.h' --include='ggml/src/ggml.c' --include='ggml/src/ggml-cpu/*' -p1 "$ROOT/patches/image/0069-image-ggml-rope-apply.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong

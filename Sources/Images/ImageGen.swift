@@ -15,7 +15,7 @@ import UniformTypeIdentifiers
 
 /// One downloadable piece of an image model, tagged with the sd-cli flag it maps to.
 struct ImageGenComponent: Identifiable {
-    enum Kind { case checkpoint, diffusion, vae, audioVAE, connectors, textEncoder, llmVision, t5, clipL }
+    enum Kind { case checkpoint, diffusion, vae, audioVAE, connectors, textEncoder, llmVision, t5, clipL, tokenizer }
     let kind: Kind
     let urlString: String
     let fileName: String
@@ -36,6 +36,7 @@ struct ImageGenComponent: Identifiable {
         case .llmVision:   return "--llm_vision"
         case .t5:          return "--t5xxl"
         case .clipL:       return "--clip_l"
+        case .tokenizer:   return "--tokenizer"
         }
     }
 
@@ -48,6 +49,7 @@ struct ImageGenComponent: Identifiable {
         case .connectors:  return spanish ? "Conectores" : "Connectors"
         case .llmVision:   return spanish ? "Proyector de visión" : "Vision projector"
         case .textEncoder, .t5, .clipL: return spanish ? "Codificador de texto" : "Text encoder"
+        case .tokenizer:   return spanish ? "Tokenizador" : "Tokenizer"
         }
     }
 
@@ -417,12 +419,37 @@ enum ImageGenCatalog {
         file: "qwen-image-2.1-turbo-Q8_0.gguf", formerFile: "Qwen-Image-2.1-Turbo-Q8_0.gguf",
         sizeGB: 7.64, minVRAMGB: 16, recommendable: false, turbo: true)
 
+    /// MOSS-Image SFT (5B DiT, FLUX.2 VAE, Qwen3.5 9B text encoder). The newest family the
+    /// engine knows; Qwen3.5 has its own vocabulary, so it needs the external tokenizer.
+    static let mossImageSFT = ImageGenModel(
+        name: "MOSS-Image SFT",
+        detailES: "5B, el modelo más nuevo de MOSS. Calidad alta; el codificador Qwen3.5 va a la CPU.",
+        detailEN: "5B, the newest MOSS model. High quality; the Qwen3.5 encoder runs on the CPU.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/leejet/MOSS-Image-SFT-GGUF/resolve/main/MOSS-Image-SFT-Q4_K.gguf",
+                fileName: "MOSS-Image-SFT-Q4_K.gguf", sizeGB: 3.33),
+            ImageGenComponent(kind: .vae,
+                urlString: "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/main/vae/flux2-vae.safetensors",
+                fileName: "flux2-vae.safetensors", sizeGB: 0.34),
+            ImageGenComponent(kind: .textEncoder,
+                urlString: "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
+                fileName: "Qwen3.5-9B-Q4_K_M.gguf", sizeGB: 5.68),
+            ImageGenComponent(kind: .tokenizer,
+                urlString: "https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/resolve/main/tokenizer/tokenizer.json",
+                fileName: "tokenizer_qwen3.5.json", sizeGB: 0.02),
+        ],
+        // The published recipe: the engine default of 20 steps at guidance 3, with the
+        // scheduler's own time shift of 5.
+        defaultSteps: 20, cfgScale: 3.0, minVRAMGB: 10, recommendable: false,
+        maxLongEdge: 1024, nativeLongEdge: 1024)
+
     /// Curated order (small to large). Z-Image sits before SDXL so it wins the
     /// 8-12 GB tie as the recommended pick (validated for photorealism on AMD);
     /// klein 9B sits before schnell to win the 16 GB tie the same way.
     static let models: [ImageGenModel] = [sd15, zImageTurbo, sdxlTurbo, qwenImage21Q3, qwenImage21TurboQ3,
                                           flux2Klein4B, qwenImage21Q4, qwenImage21TurboQ4, flux2Klein9B,
-                                          fluxSchnell, qwenImage21Q6, qwenImage21TurboQ6, qwenImage,
+                                          fluxSchnell, mossImageSFT, qwenImage21Q6, qwenImage21TurboQ6, qwenImage,
                                           qwenImage21Q8, qwenImage21TurboQ8, flux2Dev]
 
     /// The best model this GPU can run: the highest min-VRAM tier that fits, and
