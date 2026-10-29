@@ -283,6 +283,24 @@ final class ModelDetectionTests: XCTestCase {
                        preferred.path)
     }
 
+    func testRecursiveFileIndexFindsASidecarFileThatIsNotAModel() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let managed = dir.appendingPathComponent("imagen", isDirectory: true)
+        try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: true)
+        let tokenizer = managed.appendingPathComponent("tokenizer_qwen3.5.json")
+        try Data([1, 2, 3]).write(to: tokenizer)
+
+        // The tokenizer.json of Qwen3.5 travels with the text encoder, but it is
+        // not a model: it has to be found as a sidecar and stay out of the
+        // model list.
+        let index = ModelFileIndex.scan(in: dir)
+        XCTAssertEqual(index.sidecar(namedAny: ["tokenizer_qwen3.5.json"], preferredDirectory: managed)?.path,
+                       tokenizer.path)
+        XCTAssertNil(index.file(named: "tokenizer_qwen3.5.json"))
+        XCTAssertTrue(index.llmFiles.isEmpty)
+    }
+
     func testRecursiveFileIndexFindsAModelThatIsASymlink() throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
