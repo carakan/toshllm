@@ -1,5 +1,5 @@
 diff --git a/ggml/src/ggml-metal/ggml-metal-context.m b/ggml/src/ggml-metal/ggml-metal-context.m
-index 63e05fdbd..4f6c2a714 100644
+index 4450b3e22..b72e7e6c2 100644
 --- a/ggml/src/ggml-metal/ggml-metal-context.m
 +++ b/ggml/src/ggml-metal/ggml-metal-context.m
 @@ -16,17 +16,212 @@
@@ -357,7 +357,7 @@ index 63e05fdbd..4f6c2a714 100644
              ctx->n_nodes_0      = gf->n_nodes;
              ctx->n_nodes_1      = 0;
              ctx->n_nodes_per_cb = 0;
-@@ -1159,22 +1405,24 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+@@ -1165,22 +1411,24 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
                      ctx->capture_started = true;
                  }
              }
@@ -382,7 +382,7 @@ index 63e05fdbd..4f6c2a714 100644
  
              [cmd_buf enqueue];
  
-@@ -1183,16 +1431,17 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+@@ -1189,16 +1437,17 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
  
          // remember the command buffer for the next iteration
          ctx->cmd_buf_last = ctx->cmd_bufs[n_cb].obj;
@@ -400,7 +400,7 @@ index 63e05fdbd..4f6c2a714 100644
              ctx->cmd_bufs[cb_idx].obj = cmd_buf;
  
              // always enqueue the first two command buffers
-@@ -1201,17 +1450,23 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
+@@ -1207,17 +1456,23 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
                  [cmd_buf enqueue];
  
                  // update the pointer to the last queued command buffer
@@ -423,13 +423,13 @@ index 63e05fdbd..4f6c2a714 100644
          // enter here only when capturing in order to wait for all computation to finish
          // otherwise, we leave the graph to compute asynchronously
          if (use_capture && ctx->capture_started) {
-             // wait for completion and check status of each command buffer
-@@ -1265,16 +1520,25 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
- 
-             [ctx->capture_scope endScope];
-             [[MTLCaptureManager sharedCaptureManager] stopCapture];
- 
+             enum ggml_status res = GGML_STATUS_SUCCESS;
+@@ -1281,16 +1536,25 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
              ctx->capture_started = false;
+ 
+             if (res != GGML_STATUS_SUCCESS) {
+                 return res;
+             }
          }
      }
  
@@ -450,7 +450,7 @@ index 63e05fdbd..4f6c2a714 100644
  
      if (ctx->use_graph_optimize) {
          ggml_graph_optimize(gf);
-@@ -1365,30 +1629,39 @@ void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {
+@@ -1381,30 +1645,39 @@ void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {
              ctx->gf,
              ctx->finfo,
              idx_start,
@@ -491,7 +491,7 @@ index 63e05fdbd..4f6c2a714 100644
  }
  
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index 0982546c9..817a45c3a 100644
+index 1e76c0d7a..83572f89e 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
 @@ -1,14 +1,17 @@
@@ -512,7 +512,7 @@ index 0982546c9..817a45c3a 100644
  
  #include <stdatomic.h>
  #include <unistd.h>
-@@ -1729,16 +1732,38 @@ void ggml_metal_device_rsets_add(ggml_metal_device_t dev, ggml_metal_rset_t rset
+@@ -1730,16 +1733,38 @@ void ggml_metal_device_rsets_add(ggml_metal_device_t dev, ggml_metal_rset_t rset
  
      [dev->rsets->data addObject:rset];
  
@@ -551,7 +551,7 @@ index 0982546c9..817a45c3a 100644
      id<MTLSharedEvent> event = (id<MTLSharedEvent>)ev->obj;
  
      id<MTLCommandBuffer> cmd_buf = (id<MTLCommandBuffer>) cmd_buf_raw;
-@@ -1781,16 +1806,17 @@ void ggml_metal_device_event_synchronize(ggml_metal_device_t dev, ggml_metal_eve
+@@ -1782,16 +1807,17 @@ void ggml_metal_device_event_synchronize(ggml_metal_device_t dev, ggml_metal_eve
      const bool res = [event waitUntilSignaledValue:atomic_load_explicit(&ev->value, memory_order_relaxed) timeoutMS:60000];
      if (!res) {
          GGML_ABORT("%s: failed to wait for event\n", __func__);
@@ -569,7 +569,7 @@ index 0982546c9..817a45c3a 100644
          *free      = *total > cur ? *total - cur : 0;
      } else {
          *free = 0;
-@@ -2920,18 +2946,21 @@ bool ggml_metal_device_stage_set(ggml_metal_device_t dev, struct ggml_metal_buff
+@@ -2934,18 +2960,21 @@ bool ggml_metal_device_stage_set(ggml_metal_device_t dev, struct ggml_metal_buff
          [dev->stage_set_cmds[slot] waitUntilCompleted];
          [dev->stage_set_cmds[slot] release];
          dev->stage_set_cmds[slot] = nil;
@@ -591,7 +591,7 @@ index 0982546c9..817a45c3a 100644
      }
  
      memcpy(stage.contents, data, size);
-@@ -3059,17 +3088,42 @@ bool ggml_metal_device_stage_get(ggml_metal_device_t dev, struct ggml_metal_buff
+@@ -3073,17 +3102,42 @@ bool ggml_metal_device_stage_get(ggml_metal_device_t dev, struct ggml_metal_buff
  
      [dev->stage_lock unlock];
  
@@ -634,7 +634,7 @@ index 0982546c9..817a45c3a 100644
          memcpy((char *) tensor->data + offset, data, size);
          return;
      }
-@@ -3097,29 +3151,55 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor *
+@@ -3111,29 +3165,55 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor *
                      stage_load = 0;
                  } else if (TOSH_ENV("TOSH_STAGE_LOAD") != NULL) {
                      stage_load = 1;
@@ -692,7 +692,7 @@ index 0982546c9..817a45c3a 100644
              // newBufferWithBytesNoCopy requires page-aligned data, and some drivers cap the size of
              // host-visible allocations; copy through a small staging buffer in chunks instead
              size_t stage_size = MIN(size, (size_t) 8*1024*1024);
-@@ -3204,18 +3284,43 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor *
+@@ -3218,18 +3298,43 @@ void ggml_metal_buffer_set_tensor(ggml_metal_buffer_t buf, struct ggml_tensor *
          //[cmd_buf waitUntilCompleted];
  
          if (t0) {
@@ -737,10 +737,10 @@ index 0982546c9..817a45c3a 100644
          return;
      }
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index bcfa97af5..25b27f003 100644
+index 55271f647..4a319ca8a 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -2769,17 +2769,27 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -2901,17 +2901,27 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
                             op->src[0]->type == GGML_TYPE_Q6_K ||
                             op->src[0]->type == GGML_TYPE_Q2_K ||
                             op->src[0]->type == GGML_TYPE_Q3_K;
@@ -768,7 +768,7 @@ index bcfa97af5..25b27f003 100644
              /*.ne01  =*/ ne01,
              /*.ne02  =*/ ne02,
              /*.nb00  =*/ nb00,
-@@ -3722,23 +3732,51 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
+@@ -3841,23 +3851,51 @@ int ggml_metal_op_flash_attn_ext(ggml_metal_op_t ctx, int idx) {
              const bool k_q4 = op->src[1]->type == GGML_TYPE_Q4_0;
              const bool v_q4 = op->src[2]->type == GGML_TYPE_Q4_0;
                  fa_amd_nsg = 24;
@@ -821,7 +821,7 @@ index bcfa97af5..25b27f003 100644
          }
  
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index 0d1069f2c..19e13e722 100644
+index 5d012e484..cd7c353c8 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -1031,28 +1031,69 @@ kernel void kernel_mul_mv_t_t(
@@ -1050,7 +1050,7 @@ index 0d1069f2c..19e13e722 100644
              scales16[1] = a[5];
              aux32 = ((scales32 >> s_shift2) << 4) & 0x30303030;
              scales16[0] = a[il+0];
-@@ -3391,8 +3561,9 @@ template [[host_name("kernel_mul_mv_id_iq1_m_f32")]]   kernel kernel_mul_mv_id_t
+@@ -3423,8 +3593,9 @@ template [[host_name("kernel_mul_mv_id_iq1_m_f32")]]   kernel kernel_mul_mv_id_t
  template [[host_name("kernel_mul_mv_id_iq2_xxs_f32")]] kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq2_xxs_f32_disp<ggml_metal_kargs_mul_mv>>>;
  template [[host_name("kernel_mul_mv_id_iq2_xs_f32")]]  kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq2_xs_f32_disp<ggml_metal_kargs_mul_mv>>>;
  template [[host_name("kernel_mul_mv_id_iq3_xxs_f32")]] kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq3_xxs_f32_disp<ggml_metal_kargs_mul_mv>>>;

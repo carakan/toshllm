@@ -2,7 +2,12 @@ diff --git a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatM
 index 7977dfe56..489c3f1ba 100644
 --- a/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshPanel.svelte
 +++ b/tools/ui/src/lib/components/app/chat/ChatMessages/ChatMessage/ChatMessageAssistant/ToshPanel.svelte
-@@ -87,6 +87,10 @@
+@@ -82,16 +82,20 @@
+ 								{step.summary || step.tool}
+ 							</span>
+ 						</li>
+ 					{/each}
+ 				</ol>
  			</CollapsibleContentBlock>
  		{/if}
  
@@ -13,21 +18,40 @@ index 7977dfe56..489c3f1ba 100644
  		{#if tosh.sketches?.length}
  			<ToshSketches sketches={tosh.sketches} />
  		{/if}
+ 
+ 		{#if tosh.map}
+ 			<ToshMap layers={tosh.map.layers} />
+ 		{:else if tosh.mapRequest}
+ 			<button
 diff --git a/tools/ui/src/lib/services/chat.service.ts b/tools/ui/src/lib/services/chat.service.ts
-index 8bf7c2944..1b5de8e8c 100644
+index 00495b9d8..016356d71 100644
 --- a/tools/ui/src/lib/services/chat.service.ts
 +++ b/tools/ui/src/lib/services/chat.service.ts
-@@ -485,6 +485,9 @@ export class ChatService {
+@@ -483,16 +483,18 @@ export class ChatService {
+ 		// text of an agent pass that may still end in tool calls: shown, never kept as the answer
+ 		let drafted = false;
+ 		let fullReasoningContent = '';
  		let aggregatedToolCalls: ApiChatCompletionToolCall[] = [];
  		let lastTimings: ChatMessageTimings | undefined;
+ 		// why the model stopped, length once the output limit cut the answer
+ 		let finishReason: string | undefined;
  		let streamFinished = false;
 +		// an error the server sends inside the stream, after its 200: the message must say it, not end empty
 +		let streamError: (Error & { contextInfo?: { n_prompt_tokens: number; n_ctx: number } }) | undefined;
-+		let finishReason: string | undefined;
  		let modelEmitted = false;
  		let idEmitted = false;
  		let toolCallIndexOffset = 0;
-@@ -632,6 +635,31 @@ export class ChatService {
+ 		let hasOpenToolCallBatch = false;
+ 
+ 		const finalizeOpenToolCallBatch = () => {
+ 			if (!hasOpenToolCallBatch) {
+ 				return;
+@@ -630,16 +632,41 @@ export class ChatService {
+ 							if (data === SSE_DONE_MARKER) {
+ 								streamFinished = true;
+ 
+ 								continue;
+ 							}
  
  							try {
  								const parsed: ApiChatCompletionStreamChunk = JSON.parse(data);
@@ -59,16 +83,17 @@ index 8bf7c2944..1b5de8e8c 100644
  
  								// the Tosh agent's progress and metadata; a retract drops the text streamed so far
  								if (parsed.tosh && typeof parsed.tosh === 'object') {
-@@ -657,6 +685,8 @@ export class ChatService {
+ 									const event = parsed.tosh.event;
  
- 								const choice = parsed.choices?.[0];
- 								const content = choice?.delta?.content;
-+
-+								if (choice?.finish_reason) finishReason = choice.finish_reason;
- 								const reasoningContent = choice?.delta?.reasoning_content;
- 								const toolCalls = choice?.delta?.tool_calls;
- 								const timings = parsed.timings;
-@@ -785,6 +815,30 @@ export class ChatService {
+ 									if (event?.type === 'retract') {
+ 										aggregatedContent = '';
+ 										drafted = false;
+@@ -786,16 +813,40 @@ export class ChatService {
+ 
+ 			if (streamFinished) {
+ 				finalizeOpenToolCallBatch();
+ 
+ 				if (conversationId) {
  					ChatService.clearStreamState(conversationId);
  				}
  
@@ -99,7 +124,17 @@ index 8bf7c2944..1b5de8e8c 100644
  				const finalToolCalls =
  					aggregatedToolCalls.length > 0 ? JSON.stringify(aggregatedToolCalls) : undefined;
  
-@@ -1626,6 +1680,13 @@ export class ChatService {
+ 				onComplete?.(
+ 					aggregatedContent,
+ 					fullReasoningContent || undefined,
+ 					lastTimings,
+ 					finalToolCalls,
+@@ -1661,28 +1712,35 @@ export class ChatService {
+ 			| ((timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => void)
+ 			| undefined
+ 	): void {
+ 		if (!onTimingsCallback || (!timings && !promptProgress)) return;
+ 
  		onTimingsCallback(timings, promptProgress);
  	}
  
@@ -113,7 +148,11 @@ index 8bf7c2944..1b5de8e8c 100644
  	/**
  	 * Parses error response and creates appropriate error with context information
  	 * @param response - HTTP response object
-@@ -1637,7 +1698,7 @@ export class ChatService {
+ 	 * @returns Promise<Error> - Parsed error with context info if available
+ 	 */
+ 	private static async parseErrorResponse(
+ 		response: Response
+ 	): Promise<Error & { contextInfo?: { n_prompt_tokens: number; n_ctx: number } }> {
  		try {
  			const errorText = await response.text();
  			const errorData: ApiErrorResponse = JSON.parse(errorText);
@@ -122,11 +161,21 @@ index 8bf7c2944..1b5de8e8c 100644
  			const error = new Error(message) as Error & {
  				contextInfo?: { n_prompt_tokens: number; n_ctx: number };
  			};
+ 
+ 			error.name = response.status === 400 ? 'ServerError' : 'HttpError';
+ 
+ 			if (errorData.error && 'n_prompt_tokens' in errorData.error && 'n_ctx' in errorData.error) {
+ 				error.contextInfo = {
 diff --git a/tools/ui/src/lib/stores/chat/index.svelte.ts b/tools/ui/src/lib/stores/chat/index.svelte.ts
-index c0f8c8353..2dc72b75d 100644
+index 5de435b6f..98c6966ba 100644
 --- a/tools/ui/src/lib/stores/chat/index.svelte.ts
 +++ b/tools/ui/src/lib/stores/chat/index.svelte.ts
-@@ -897,9 +897,12 @@ class ChatStore implements ChatStreamHost, ChatFlowsHost {
+@@ -1019,19 +1019,22 @@ class ChatStore implements ChatStreamHost, ChatFlowsHost {
+ 				streamedContent = '';
+ 				updateStreamingUI();
+ 
+ 				return;
+ 			}
  
  			if (event?.type === 'tool_call' && event.call) {
  				tosh = { ...tosh, steps: [...(tosh.steps ?? []), event.call] };
@@ -139,7 +188,17 @@ index c0f8c8353..2dc72b75d 100644
  					...(chunk.sketches?.length ? { sketches: chunk.sketches } : {}),
  					...(chunk.map_request ? { mapRequest: chunk.map_request } : {})
  				};
-@@ -1055,6 +1058,13 @@ class ChatStore implements ChatStreamHost, ChatFlowsHost {
+ 			} else {
+ 				return;
+ 			}
+ 
+ 			conversationsStore.updateMessageAtIndex(
+@@ -1176,16 +1179,23 @@ class ChatStore implements ChatStreamHost, ChatFlowsHost {
+ 					if (pending) {
+ 						this.sendMessage(pending.content, pending.extras);
+ 					}
+ 
+ 					return;
  				}
  
  				console.error('Streaming error:', error);
@@ -153,11 +212,21 @@ index c0f8c8353..2dc72b75d 100644
  				// keep whatever was streamed so far, the message stays in memory and in DB
  				await this.savePartialResponseIfNeeded(convId);
  				cleanupStreamingState();
+ 				this.clearPendingMessage(convId);
+ 
+ 				const contextInfo = (
+ 					error as Error & { contextInfo?: { n_prompt_tokens: number; n_ctx: number } }
+ 				).contextInfo;
 diff --git a/tools/ui/src/lib/types/tosh.d.ts b/tools/ui/src/lib/types/tosh.d.ts
 index 30f3ddc58..a9936ef8d 100644
 --- a/tools/ui/src/lib/types/tosh.d.ts
 +++ b/tools/ui/src/lib/types/tosh.d.ts
-@@ -54,6 +54,8 @@ export interface ToshChunk {
+@@ -49,12 +49,14 @@ export interface ToshChunk {
+ 	map_request?: ToshMapRequest;
+ 	map?: { layers: ToshMapLayer[] };
+ 	[key: string]: unknown;
+ }
+ 
  /** What an assistant message keeps of the agent's work. */
  export interface ToshMessageData {
  	steps?: ToshCall[];
@@ -166,3 +235,4 @@ index 30f3ddc58..a9936ef8d 100644
  	sketches?: ToshSketch[];
  	mapRequest?: ToshMapRequest;
  	map?: { layers: ToshMapLayer[] };
+ }

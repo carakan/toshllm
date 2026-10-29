@@ -1,8 +1,13 @@
 diff --git a/tools/ui/src/lib/services/chat.service.ts b/tools/ui/src/lib/services/chat.service.ts
-index 4da104717..92fe5b9c3 100644
+index af69445bd..d6e2bf98b 100644
 --- a/tools/ui/src/lib/services/chat.service.ts
 +++ b/tools/ui/src/lib/services/chat.service.ts
-@@ -455,7 +455,8 @@ export class ChatService {
+@@ -451,17 +451,18 @@ export class ChatService {
+ 		onToolCallChunk?: (chunk: string) => void,
+ 		onModel?: (model: string) => void,
+ 		onCompletionId?: (id: string) => void,
+ 		onTimings?: (timings?: ChatMessageTimings, promptProgress?: ChatMessagePromptProgress) => void,
+ 		conversationId?: string,
  		abortSignal?: AbortSignal,
  		onConnectionState?: (state: StreamConnectionState) => void,
  		streamModel?: string | null,
@@ -12,7 +17,17 @@ index 4da104717..92fe5b9c3 100644
  	): Promise<void> {
  		let reader = response.body?.getReader();
  
-@@ -670,6 +671,12 @@ export class ChatService {
+ 		if (!reader) {
+ 			throw new Error('No response body');
+ 		}
+ 
+ 		// bytesParsed is the absolute server side buffer offset of the next byte to parse
+@@ -667,16 +668,22 @@ export class ChatService {
+ 									streamFinished = true;
+ 
+ 									continue;
+ 								}
+ 
  								// the Tosh agent's progress and metadata; a retract drops the text streamed so far
  								if (parsed.tosh && typeof parsed.tosh === 'object') {
  									const event = parsed.tosh.event;
@@ -25,7 +40,17 @@ index 4da104717..92fe5b9c3 100644
  
  									if (event?.type === 'retract') {
  										aggregatedContent = '';
-@@ -761,7 +768,13 @@ export class ChatService {
+ 										drafted = false;
+ 									}
+ 
+ 									if (!abortSignal?.aborted) onTosh?.(parsed.tosh);
+ 
+@@ -759,17 +766,23 @@ export class ChatService {
+ 					if (streamFinished) break;
+ 				}
+ 
+ 				// inner reader done, decide whether to try a resume
+ 				if (abortSignal?.aborted) break;
  
  				if (streamFinished) break;
  
@@ -40,7 +65,17 @@ index 4da104717..92fe5b9c3 100644
  
  				if (!madeProgress) {
  					onConnectionState?.(StreamConnectionState.LOST);
-@@ -797,7 +810,12 @@ export class ChatService {
+ 					onError?.(new Error('Stream resume produced no new bytes, giving up'));
+ 
+ 					break;
+ 				}
+ 
+@@ -795,17 +808,22 @@ export class ChatService {
+ 					onConnectionState?.(StreamConnectionState.LOST);
+ 					onError?.(new Error('Stream connection lost and could not be resumed'));
+ 
+ 					break;
+ 				}
  
  				const newReader = resumeResp.body?.getReader();
  
@@ -54,7 +89,17 @@ index 4da104717..92fe5b9c3 100644
  
  				try {
  					reader.releaseLock();
-@@ -836,9 +854,14 @@ export class ChatService {
+ 				} catch {
+ 					/* ignore */
+ 				}
+ 				reader = newReader;
+ 				decoder = new TextDecoder();
+@@ -834,19 +852,24 @@ export class ChatService {
+ 						if (!abortSignal?.aborted) onChunk?.(note);
+ 					}
+ 
+ 					onError?.(streamError);
+ 
  					return;
  				}
  
@@ -71,7 +116,17 @@ index 4da104717..92fe5b9c3 100644
  
  					aggregatedContent += note;
  
-@@ -1371,7 +1394,8 @@ export class ChatService {
+ 					if (!abortSignal?.aborted) onChunk?.(note);
+ 				}
+ 
+ 				const finalToolCalls =
+ 					aggregatedToolCalls.length > 0 ? JSON.stringify(aggregatedToolCalls) : undefined;
+@@ -1396,17 +1419,18 @@ export class ChatService {
+ 					onToolCallChunk,
+ 					onModel,
+ 					onCompletionId,
+ 					onTimings,
+ 					conversationId,
  					signal,
  					onConnectionState,
  					options.model,
@@ -81,11 +136,21 @@ index 4da104717..92fe5b9c3 100644
  				);
  
  				return;
+ 			} else {
+ 				return ChatService.handleNonStreamResponse(
+ 					response,
+ 					onComplete,
+ 					onError,
 diff --git a/tools/ui/src/lib/types/tosh.d.ts b/tools/ui/src/lib/types/tosh.d.ts
 index a9936ef8d..aed7989e3 100644
 --- a/tools/ui/src/lib/types/tosh.d.ts
 +++ b/tools/ui/src/lib/types/tosh.d.ts
-@@ -48,6 +48,8 @@ export interface ToshChunk {
+@@ -43,16 +43,18 @@ export interface ToshMapLayer {
+ 
+ /** The `tosh` object of a chunk: a progress event while the agent works, or the answer's metadata at the end. */
+ export interface ToshChunk {
+ 	version?: number;
+ 	event?: { type: string; call?: ToshCall; [key: string]: unknown };
  	sketches?: ToshSketch[];
  	map_request?: ToshMapRequest;
  	map?: { layers: ToshMapLayer[] };
@@ -94,6 +159,11 @@ index a9936ef8d..aed7989e3 100644
  	[key: string]: unknown;
  }
  
+ /** What an assistant message keeps of the agent's work. */
+ export interface ToshMessageData {
+ 	steps?: ToshCall[];
+ 	/** What the agent is doing while it works, as it says it; gone once it answers. */
+ 	progress?: string;
 diff --git a/tools/ui/tests/unit/stream-ending.test.ts b/tools/ui/tests/unit/stream-ending.test.ts
 new file mode 100644
 index 000000000..f8bf880a8

@@ -1,8 +1,11 @@
 diff --git a/tools/ui/src/lib/services/chat.service.ts b/tools/ui/src/lib/services/chat.service.ts
-index 569a3e910..8bf7c2944 100644
+index 72529b4f4..00495b9d8 100644
 --- a/tools/ui/src/lib/services/chat.service.ts
 +++ b/tools/ui/src/lib/services/chat.service.ts
-@@ -477,10 +477,12 @@ export class ChatService {
+@@ -475,16 +475,18 @@ export class ChatService {
+ 		if (conversationId) {
+ 			ChatService.saveStreamState(conversationId, 0, streamModel);
+ 		}
  
  		onConnectionState?.(StreamConnectionState.STREAMING);
  
@@ -13,9 +16,15 @@ index 569a3e910..8bf7c2944 100644
  		let fullReasoningContent = '';
  		let aggregatedToolCalls: ApiChatCompletionToolCall[] = [];
  		let lastTimings: ChatMessageTimings | undefined;
+ 		// why the model stopped, length once the output limit cut the answer
+ 		let finishReason: string | undefined;
  		let streamFinished = false;
  		let modelEmitted = false;
-@@ -631,13 +633,28 @@ export class ChatService {
+ 		let idEmitted = false;
+@@ -631,19 +633,34 @@ export class ChatService {
+ 								continue;
+ 							}
+ 
  							try {
  								const parsed: ApiChatCompletionStreamChunk = JSON.parse(data);
  
@@ -43,9 +52,15 @@ index 569a3e910..8bf7c2944 100644
  								}
  
  								const choice = parsed.choices?.[0];
+ 
+ 								if (choice?.finish_reason) finishReason = choice.finish_reason;
+ 
  								const content = choice?.delta?.content;
  								const reasoningContent = choice?.delta?.reasoning_content;
-@@ -665,10 +682,18 @@ export class ChatService {
+@@ -668,16 +685,24 @@ export class ChatService {
+ 
+ 								if (timings) {
+ 									ChatService.notifyTimings(timings, promptProgress, onTimings);
  									lastTimings = timings;
  								}
  
@@ -64,3 +79,6 @@ index 569a3e910..8bf7c2944 100644
  									if (!abortSignal?.aborted) {
  										onChunk?.(content);
  									}
+ 								}
+ 
+ 								if (reasoningContent) {

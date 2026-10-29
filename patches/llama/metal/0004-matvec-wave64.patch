@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-metal/CMakeLists.txt b/ggml/src/ggml-metal/CMakeLists.txt
-index 05cdea156..3ada4d902 100644
+index 91691b223..235c83fc2 100644
 --- a/ggml/src/ggml-metal/CMakeLists.txt
 +++ b/ggml/src/ggml-metal/CMakeLists.txt
-@@ -49,16 +49,17 @@ set(METALLIB_KERNEL_SOURCES
+@@ -50,16 +50,17 @@ set(METALLIB_KERNEL_SOURCES
      kernels/fa_vec_f32.metal
      kernels/fa_vec_q4_0.metal
      kernels/fa_vec_q4_1.metal
@@ -21,10 +21,10 @@ index 05cdea156..3ada4d902 100644
      kernels/reduce.metal
      kernels/tri.metal
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index c0595b00b..66a4dd7a0 100644
+index 2ad1d12f2..6c0261a6f 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -826,20 +826,26 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext(ggml_
+@@ -867,20 +867,26 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_ext(ggml_
      // q6_K measured slower with the header cached (its dequant is register-heavy), so it stays generic
      const bool is_khdr = tsrc0 == GGML_TYPE_Q5_K || tsrc0 == GGML_TYPE_Q2_K || tsrc0 == GGML_TYPE_Q3_K;
          (simd_width_lds == 64 || TOSH_ENV("TOSH_EXT_LDS") != nullptr) &&
@@ -51,7 +51,7 @@ index c0595b00b..66a4dd7a0 100644
  
      ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
      if (!res.pipeline) {
-@@ -1086,35 +1092,58 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
+@@ -1127,35 +1133,58 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
  
      res.nsg = N_MM_SIMD_GROUP_X * N_MM_SIMD_GROUP_Y;
      res.nsg = (!has_tensor && use_mm_manual) ? ((wide || narrow) ? 4 : 8) : N_MM_SIMD_GROUP_X * N_MM_SIMD_GROUP_Y;
@@ -111,7 +111,7 @@ index c0595b00b..66a4dd7a0 100644
          case GGML_TYPE_BF16:
              {
                  if (ne00 < 32) {
-@@ -1137,213 +1166,326 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -1178,213 +1207,326 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
              } break;
          case GGML_TYPE_Q2_0:
              {
@@ -501,7 +501,7 @@ index c0595b00b..66a4dd7a0 100644
              } break;
          default:
              {
-@@ -1351,18 +1493,16 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -1392,18 +1534,16 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
                  GGML_ABORT("not implemented");
              }
      };
@@ -520,7 +520,7 @@ index c0595b00b..66a4dd7a0 100644
      if (props->wave64_decode) {
          const bool helper_reduce = (tsrc0 == GGML_TYPE_F16 || tsrc0 == GGML_TYPE_F32 ||
                                      tsrc0 == GGML_TYPE_BF16 || tsrc0 == GGML_TYPE_Q8_0);
-@@ -1395,21 +1535,60 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
+@@ -1436,21 +1576,60 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
  
      // A stride that is a multiple of four lets the quant arrays be read a word at a time.
      // The two widths are decided apart: 64 lanes have no last-level cache to hide the extra
@@ -581,7 +581,7 @@ index c0595b00b..66a4dd7a0 100644
          ggml_metal_cv_set_int16(cv, nsg,            FC_MUL_MV + 0);
          ggml_metal_cv_set_int16(cv, (int16_t) ne12, FC_MUL_MV + 2);
          ggml_metal_cv_set_int16(cv, r2,             FC_MUL_MV + 3);
-@@ -1543,17 +1722,16 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
+@@ -1562,17 +1741,16 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
  
      size_t smem = 0; // shared memory
  
@@ -599,7 +599,7 @@ index c0595b00b..66a4dd7a0 100644
          case GGML_TYPE_BF16:
              {
                  nsg = std::min(4, (ne00 + 127) / 128);
-@@ -1616,74 +1794,54 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
+@@ -1634,74 +1812,54 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
              } break;
          case GGML_TYPE_Q4_K:
              {
@@ -681,7 +681,7 @@ index c0595b00b..66a4dd7a0 100644
                  smem = 1024*8;
              } break;
          case GGML_TYPE_IQ1_S:
-@@ -1717,19 +1875,57 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
+@@ -1735,19 +1893,57 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
              } break;
          default:
              {
@@ -741,7 +741,7 @@ index c0595b00b..66a4dd7a0 100644
          const bool helper = (tsrc0 == GGML_TYPE_F16 || tsrc0 == GGML_TYPE_F32 ||
                               tsrc0 == GGML_TYPE_BF16 || tsrc0 == GGML_TYPE_Q8_0);
          const bool sr     = (tsrc0 == GGML_TYPE_Q4_K || tsrc0 == GGML_TYPE_Q5_K || tsrc0 == GGML_TYPE_Q6_K ||
-@@ -1745,28 +1941,35 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
+@@ -1763,28 +1959,35 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
          if (helper) { nw = (int16_t) props_id->simd_width; smem = (size_t) nw*sizeof(float)*nr0; }
          else if (sr) { nw = (int16_t) props_id->simd_width; }
          else if (lut) { nw = (int16_t) props_id->simd_width; smem = (size_t) nw*sizeof(float); }
@@ -778,10 +778,10 @@ index c0595b00b..66a4dd7a0 100644
      res.nr0  = nr0;
      res.nr1  = nr1;
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index ca31f54ab..754e0b0ae 100644
+index 6792a5d9d..6c48821bd 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -135,22 +135,24 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan_
+@@ -136,23 +136,25 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_scan_
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rwkv              (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_gated_delta_net   (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_solve_tri         (ggml_metal_library_t lib, const struct ggml_tensor * op);
@@ -792,11 +792,12 @@ index ca31f54ab..754e0b0ae 100644
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv            (ggml_metal_library_t lib, const struct ggml_tensor * op);
 +int ggml_metal_mv_nc2_rows(enum ggml_type type, int simd_width, int ne11, int ne01, int ne00);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_map0    (ggml_metal_library_t lib, int ne02, int ne20);
- struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_amax(ggml_metal_library_t lib);
- struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_amax_part(ggml_metal_library_t lib);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id_zero    (ggml_metal_library_t lib);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id         (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argmax            (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argmax_part       (ggml_metal_library_t lib);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argmax_final      (ggml_metal_library_t lib);
 +struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tosh_topk_moe     (ggml_metal_library_t lib);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argsort           (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argsort_merge     (ggml_metal_library_t lib, const struct ggml_tensor * op);
@@ -807,10 +808,10 @@ index ca31f54ab..754e0b0ae 100644
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_top_k_merge       (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_topk_moe          (ggml_metal_library_t lib, int32_t n_expert, int32_t top_k, bool with_norm);
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index a19df0fd6..f2f0d26a2 100644
+index 66d42432c..37353589e 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -127,16 +127,17 @@ int ggml_metal_pipeline_max_theads_per_threadgroup(struct ggml_metal_pipeline_wi
+@@ -128,16 +128,17 @@ int ggml_metal_pipeline_max_theads_per_threadgroup(struct ggml_metal_pipeline_wi
      X(FA_VEC_F32,      fa_vec_f32)     \
      X(FA_VEC_Q4_0,     fa_vec_q4_0)    \
      X(FA_VEC_Q4_1,     fa_vec_q4_1)    \
@@ -829,10 +830,10 @@ index a19df0fd6..f2f0d26a2 100644
      X(REDUCE,          reduce)         \
      X(TRI,             tri)            \
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index a8e4c7357..e0130aafc 100644
+index 78d49e79a..0641b6ad2 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -2647,16 +2647,21 @@ static int ggml_metal_op_mul_mat_mv(ggml_metal_op_t ctx, int idx) {
+@@ -2779,16 +2779,21 @@ static int ggml_metal_op_mul_mat_mv(ggml_metal_op_t ctx, int idx) {
      }
  
      return 1;
@@ -854,7 +855,7 @@ index a8e4c7357..e0130aafc 100644
      static const bool disabled = TOSH_ENV("TOSH_SWIGLU_FUSION_DISABLE") != nullptr;
      if (disabled || !ctx->use_fusion() || idx + 2 >= ctx->n_nodes()) {
  int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
-@@ -2689,16 +2694,17 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -2821,16 +2826,17 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
  
      const int16_t r2 = ne12/ne02;
      const int16_t r3 = ne13/ne03;
@@ -872,7 +873,7 @@ index a8e4c7357..e0130aafc 100644
             op->src[0]->type == GGML_TYPE_F16  ||
             op->src[0]->type == GGML_TYPE_BF16 ||
             op->src[0]->type == GGML_TYPE_Q1_0 ||
-@@ -2779,17 +2785,16 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -2911,17 +2917,16 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
              case 8:
                  r1ptg = 4; break;
              case 5:
@@ -890,7 +891,7 @@ index a8e4c7357..e0130aafc 100644
                             op->src[0]->type == GGML_TYPE_Q3_K;
  
          static const int nr0_env = []() {
-@@ -2805,17 +2810,38 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
+@@ -2937,17 +2942,38 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
              const char * s = TOSH_ENV("TOSH_EXT_NR0_MINROWS");
              // off by default: the win depends on the weight's shape and one measured model
              // still regresses at four columns, so it stays opt-in until that is understood
@@ -930,7 +931,7 @@ index a8e4c7357..e0130aafc 100644
              /*.nb00  =*/ nb00,
              /*.nb01  =*/ nb01,
 diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
-index e9a3fb166..c7831f5d9 100644
+index 70ed2c88c..de19b0e12 100644
 --- a/ggml/src/ggml-metal/kernels/mul_mv.metal
 +++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
 @@ -1,10 +1,11 @@
@@ -3194,7 +3195,9 @@ index e9a3fb166..c7831f5d9 100644
 +            qf2 = {shmem_f32[q8[4]], shmem_f32[q8[5]], shmem_f32[q8[6]], shmem_f32[q8[7]]};
 +            acc1 += yl[0] * qf1;
 +            acc2 += yl[1] * qf2;
-+
+ 
+-    float yl[32];
+-    float sumf[nr0]={0.f};
 +            aux32[0] = (q4[1]     ) & 0x0f0f0f0f;
 +            aux32[1] = (q4[1] >> 4) & 0x0f0f0f0f;
 +            qf1 = {shmem_f32[q8[0]], shmem_f32[q8[1]], shmem_f32[q8[2]], shmem_f32[q8[3]]};
@@ -3202,14 +3205,8 @@ index e9a3fb166..c7831f5d9 100644
 +            acc1 += yl[2] * qf1;
 +            acc2 += yl[3] * qf2;
  
--    float yl[32];
--    float sumf[nr0]={0.f};
-+            acc1 += acc2;
- 
 -    const int nb32 = nb * (QK_K / 32);
-+            const int ls = (((xb.scales_l[ib/2] >> 4*(ib%2)) & 0xf) | (((xb.scales_h >> 2*ib) & 3) << 4)) - 32;
-+            sumf[row] += (float)xb.d * ls * (acc1[0] + acc1[1] + acc1[2] + acc1[3]);
-+        }
++            acc1 += acc2;
  
 -    // the 2048-entry grid is read from constant memory on every inner step, four divergent
 -    // loads per row; staging it once per threadgroup is what iq2_s already does
@@ -3219,6 +3216,10 @@ index e9a3fb166..c7831f5d9 100644
 -        const int gsz = FC_mul_mv_nw*FC_mul_mv_nsg;
 -        for (int i = gid; i < NGRID_IQ1S; i += gsz) sgrid[i] = iq1s_grid_gpu[i];
 -        threadgroup_barrier(mem_flags::mem_threadgroup);
++            const int ls = (((xb.scales_l[ib/2] >> 4*(ib%2)) & 0xf) | (((xb.scales_h >> 2*ib) & 3) << 4)) - 32;
++            sumf[row] += (float)xb.d * ls * (acc1[0] + acc1[1] + acc1[2] + acc1[3]);
++        }
++
 +        yb += NG * QK_K;
      }
  
@@ -4073,7 +4074,7 @@ index e9a3fb166..c7831f5d9 100644
  template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_2_nr0_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<2, 4, block_q3_K, 256, dequantize_q3_K>;
  template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_3_nr0_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<3, 4, block_q3_K, 256, dequantize_q3_K>;
  template [[host_name("kernel_mul_mv_ext_q3_K_f32_r1_4_nr0_4")]] kernel mul_mv_ext_q4x4_f32_t kernel_mul_mv_ext_q4x4_f32_disp<4, 4, block_q3_K, 256, dequantize_q3_K>;
-@@ -4451,24 +6372,22 @@ template [[host_name("kernel_mul_mv_id_q5_0_f32")]]    kernel kernel_mul_mv_id_t
+@@ -4483,24 +6404,22 @@ template [[host_name("kernel_mul_mv_id_q5_0_f32")]]    kernel kernel_mul_mv_id_t
  template [[host_name("kernel_mul_mv_id_q5_1_f32")]]    kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<mul_vec_q_n_f32_impl<block_q5_1, N_R0_Q5_1>>>;
  
  template [[host_name("kernel_mul_mv_id_mxfp4_f32")]]   kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_mxfp4_f32_impl<N_R0_MXFP4>>>;
@@ -12008,10 +12009,10 @@ index 000000000..b42b3d62c
 +template [[host_name("kernel_mul_mv_id_q1_0_f32_w64")]] kernel kernel_mul_mv_id_w64_t kernel_mul_mv_id_w64<mmv_w64_fn<kernel_mul_mv_q1_0_f32_w64_impl<N_R0_Q1_0>>>;
 +template [[host_name("kernel_mul_mv_id_q2_0_f32_w64")]] kernel kernel_mul_mv_id_w64_t kernel_mul_mv_id_w64<mmv_w64_fn<kernel_mul_mv_q2_0_f32_w64_impl<N_R0_Q2_0>>>;
 diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
-index d8893025e..7f83ede98 100644
+index a7c1d61db..17be47e7e 100644
 --- a/tests/test-backend-ops.cpp
 +++ b/tests/test-backend-ops.cpp
-@@ -10355,16 +10355,22 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+@@ -11193,16 +11193,22 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
      // are two destination columns (Q4_K_MMVQ_ROW_PAIR_MIN_NROWS in ggml-sycl/mmvq.cpp). Cover both
      // sides of that boundary, including an odd row count above it for the row-pair tail.
      for (int64_t m : {6271, 6272, 6273}) {

@@ -1,8 +1,13 @@
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index ade45be2e..d19b0eca7 100644
+index 6d732a677..227f42ca6 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -177,11 +177,16 @@ static std::vector<std::string> tosh_agent_chunks(const json & answer, int statu
+@@ -178,21 +178,26 @@ static std::vector<std::string> tosh_agent_chunks(const json & answer, int statu
+         }
+     }
+     for (size_t i = 0; i < calls.size(); i++) {
+         calls[i]["index"] = (int) i;
+     }
      if (!calls.empty()) {
          delta["tool_calls"] = calls;
      }
@@ -21,3 +26,8 @@ index ade45be2e..d19b0eca7 100644
      for (const char * key : {"usage", "tosh"}) {
          if (answer.contains(key)) {
              last[key] = answer.at(key);
+         }
+     }
+     return {"data: " + first.dump() + "\n\n", "data: " + last.dump() + "\n\n", "data: [DONE]\n\n"};
+ }
+ 

@@ -1,8 +1,11 @@
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
-index f539502a4..49363af64 100644
+index d2d214821..4fbfe2300 100644
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -2511,10 +2511,24 @@ private:
+@@ -2719,16 +2719,30 @@ private:
+ 
+         return true;
+     }
  
      // n_tokens_cur: the number of tokens added to the batch for the current slot
      void create_checkpoint(server_slot & slot, const int64_t n_tokens_cur, llama_pos pos_min, llama_pos pos_max) {
@@ -27,3 +30,6 @@ index f539502a4..49363af64 100644
          // only when the list is full, otherwise short prompts keep just the oldest checkpoint
          int64_t last = -1;
          for (auto it = slot.prompt.checkpoints.begin();
+                 slot.prompt.checkpoints.size() + 1 >= (size_t) params_base.n_ctx_checkpoints &&
+                 it != slot.prompt.checkpoints.end(); ) {
+             if (it->id_task != id_task && last >= 0 && it->n_tokens <= last + params_base.checkpoint_min_step) {

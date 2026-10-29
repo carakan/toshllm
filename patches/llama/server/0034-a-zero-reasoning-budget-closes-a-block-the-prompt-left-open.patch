@@ -50,7 +50,7 @@ index 1b89a04c4..0d1ff28a4 100644
 +// while the end is being forced it is not one of the forced tokens.
 +void common_reasoning_budget_accept_prompt(struct llama_sampler * smpl, llama_token token);
 diff --git a/common/sampling.cpp b/common/sampling.cpp
-index d9c508049..5d42a62a5 100644
+index 564fa9c4d..6d25dd419 100644
 --- a/common/sampling.cpp
 +++ b/common/sampling.cpp
 @@ -316,17 +316,17 @@ struct common_sampler * common_sampler_init(
