@@ -13,7 +13,11 @@ ROOT="$PWD"
 
 LLAMA_COMMIT="${LLAMA_COMMIT:-d81235049384534c167caea52b85a694f6103d14}"   # llama.cpp commit validated against the patches
 WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # whisper.cpp v1.9.3
-SD_COMMIT="${SD_COMMIT:-77b72a2efed78f55de26892c7e909cee001e8b83}"  # stable-diffusion.cpp commit validated for image gen
+# stable-diffusion.cpp: upstream e7b7ec6 with e239e4b (the native ggml GLU) cherry-picked
+# on top. The upstream commit 37bc88b between them asks for a ggml API this ggml does not
+# have (ggml_backend_sched_set_compute_callback), so it is left out; the GLU refactor
+# itself only needs ggml_swiglu/ggml_geglu_swapped, which the Metal backend implements.
+SD_COMMIT="${SD_COMMIT:-cdc40947f01dc7d8ee09323c82bea35564afa0e9}"  # stable-diffusion.cpp commit validated for image gen
 # The image engine stays on the ggml commit its Metal patches were written against: upstream
 # split ggml-metal.metal into kernels/ and moved the flash-attention kernels into per-type
 # files, so the AMD backend would have to be rewritten for it. The sd.cpp code above moves
