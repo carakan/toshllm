@@ -88,6 +88,14 @@ struct ModelFileIndex: Sendable {
         return nil
     }
 
+    /// The names a sidecar is matched by: only the name the app manages. The
+    /// name of the file on the server is not enough, because a generic
+    /// tokenizer.json that belongs to another model would then satisfy the
+    /// component and be handed over as the wrong vocabulary.
+    static func sidecarNames(fileName: String, former: [String] = []) -> [String] {
+        [fileName] + former
+    }
+
     /// A sidecar file, e.g. the tokenizer.json that goes with a text encoder.
     func sidecar(namedAny names: [String], preferredDirectory: URL? = nil) -> URL? {
         let preferred = preferredDirectory?.standardizedFileURL.path
