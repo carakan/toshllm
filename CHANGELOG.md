@@ -12,6 +12,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - **Images: the image engine's stable-diffusion.cpp half moves to upstream master,** which also brings FLUX.3 and Chroma; its Metal backend stays on the ggml commit the AMD patches were written against.
+- **Images: the gated activations run as one fused GLU,** taken from upstream, so the diffusion step spends fewer kernels on the same maths; the same upstream work fixes SDXL models that ship the UNet alone, with the diffusers tensor names.
 
 ### Fixed
 
