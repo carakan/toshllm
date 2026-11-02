@@ -1,0 +1,178 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
+index 3b0af692..e54c8311 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -350,2 +350,19 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_glu(ggml_metal_l
+ 
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope_apply(ggml_metal_library_t lib, const ggml_tensor * op) {
++    assert(op->op == GGML_OP_ROPE_APPLY);
++
++    char base[256];
++    char name[256];
++
++    snprintf(base, 256, "kernel_rope_apply_%s", ggml_type_name(op->src[0]->type));
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
++
+ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_sum(ggml_metal_library_t lib, const ggml_tensor * op) {
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+index be973ade..3c69ef7f 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -122,2 +122,3 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_silu_back
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_glu               (ggml_metal_library_t lib, const struct ggml_tensor * op);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope_apply        (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_sum               (ggml_metal_library_t lib, const struct ggml_tensor * op);
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index 54928999..53452fbf 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1489,2 +1489,6 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+             }
++        case GGML_OP_ROPE_APPLY:
++            // f32 in, f32 out; the destination is allocated contiguous by ggml_rope_apply
++            return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
++                op->type == GGML_TYPE_F32 && ggml_is_contiguous(op);
+         case GGML_OP_NONE:
+diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
+index 3b0d5e97..59d2920a 100644
+--- a/ggml/src/ggml-metal/ggml-metal-impl.h
++++ b/ggml/src/ggml-metal/ggml-metal-impl.h
+@@ -814,2 +814,17 @@ typedef struct{
+ 
++typedef struct{
++    int64_t  ne00;        // head_dim
++    int64_t  ne01;        // heads
++    int64_t  ne02;        // tokens
++    uint64_t nb01;        // src0 byte strides: head, token, batch
++    uint64_t nb02;
++    uint64_t nb03;
++    int64_t  half_dim;
++    int32_t  interleaved;
++    uint64_t pe_nb0;      // pe byte strides: c0, c1, pair, token
++    uint64_t pe_nb1;
++    uint64_t pe_nb2;
++    uint64_t pe_nb3;
++} ggml_metal_kargs_rope_apply;
++
+ typedef struct {
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+index 7a409bd6..991a6de2 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -309,2 +309,6 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
+             } break;
++        case GGML_OP_ROPE_APPLY:
++            {
++                n_fuse = ggml_metal_op_rope_apply(ctx, idx);
++            } break;
+         case GGML_OP_SUM:
+@@ -923,2 +927,43 @@ int ggml_metal_op_glu(ggml_metal_op_t ctx, int idx) {
+ 
++int ggml_metal_op_rope_apply(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    GGML_TENSOR_LOCALS(int64_t,  ne0, op->src[0], ne);
++    GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
++    GGML_TENSOR_LOCALS(uint64_t, nb1, op->src[1], nb);
++
++    auto pipeline = ggml_metal_library_get_pipeline_rope_apply(lib, op);
++
++    ggml_metal_kargs_rope_apply args = {
++        /*.ne00       =*/ ne00,
++        /*.ne01       =*/ ne01,
++        /*.ne02       =*/ ne02,
++        /*.nb01       =*/ nb01,
++        /*.nb02       =*/ nb02,
++        /*.nb03       =*/ nb03,
++        /*.half_dim   =*/ ne00/2,
++        /*.interleaved=*/ ggml_get_op_params_i32(op, 0) != 0,
++        /*.pe_nb0     =*/ nb10,
++        /*.pe_nb1     =*/ nb11,
++        /*.pe_nb2     =*/ nb12,
++        /*.pe_nb3     =*/ nb13,
++    };
++
++    // one thread per (pair, row); rows run token fastest, then head, then batch
++    const int64_t rows = ne01*ne02*ne03;
++    const int64_t half = std::max<int64_t>(1, ne00/2);
++    const int nth = (int) std::min<int64_t>((int64_t) ggml_metal_pipeline_max_theads_per_threadgroup(pipeline), half);
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3);
++    ggml_metal_encoder_dispatch_threadgroups(enc, (ne00/2 + nth - 1)/nth, rows, 1, nth, 1, 1);
++
++    return 1;
++}
++
+ int ggml_metal_op_sum(ggml_metal_op_t ctx, int idx) {
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
+index 882228ee..44d72bf3 100644
+--- a/ggml/src/ggml-metal/ggml-metal-ops.h
++++ b/ggml/src/ggml-metal/ggml-metal-ops.h
+@@ -50,2 +50,3 @@ int ggml_metal_op_unary             (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_glu               (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_rope_apply        (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_sum               (ggml_metal_op_t ctx, int idx);
+diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
+index 9b0c2aa6..4cc6f90b 100644
+--- a/ggml/src/ggml-metal/ggml-metal.metal
++++ b/ggml/src/ggml-metal/ggml-metal.metal
+@@ -1671,2 +1671,45 @@ template [[host_name("kernel_swiglu_oai_f16")]] kernel kernel_swiglu_oai_t kerne
+ 
++// Apply precomputed rotary matrices (ggml_rope_apply): pe carries [[cos, -sin], [sin, cos]]
++// for each pair of the head dimension and each token, shared across heads and batches.
++// The CPU implementation this replaces moved every attention's q and k to the host on each
++// step, which was most of the DiT's time on MOSS-Image and Qwen-Image.
++kernel void kernel_rope_apply_f32(
++        constant ggml_metal_kargs_rope_apply & args,
++        device const char * src0,
++        device const char * src1,
++        device       char * dst,
++        uint2 tpig[[thread_position_in_grid]]) {
++    const int64_t j   = tpig.x;   // pair within the head dimension
++    const int64_t row = tpig.y;   // token fastest, then head, then batch
++    if (j >= args.half_dim) {
++        return;
++    }
++    const int64_t token = row % args.ne02;
++    const int64_t head  = (row / args.ne02) % args.ne01;
++    const int64_t batch = row / (args.ne02 * args.ne01);
++
++    device const char * x_row = src0 + head*args.nb01 + token*args.nb02 + batch*args.nb03;
++    device const char * m     = src1 + j*args.pe_nb2 + token*args.pe_nb3;
++
++    const int64_t i0 = args.interleaved ? 2*j : j;
++    const int64_t i1 = args.interleaved ? 2*j + 1 : j + args.half_dim;
++
++    const float a = *(device const float *) (x_row + i0*4);
++    const float b = *(device const float *) (x_row + i1*4);
++
++    const float c     = *(device const float *) (m);
++    const float s     = *(device const float *) (m + args.pe_nb1);
++    const float neg_s = *(device const float *) (m + args.pe_nb0);
++    const float c1    = *(device const float *) (m + args.pe_nb0 + args.pe_nb1);
++
++    device float * out = (device float *) dst + row*args.ne00;
++    if (args.interleaved) {
++        out[i0] = a*c + b*neg_s;
++        out[i1] = a*s + b*c1;
++    } else {
++        out[i0] = a*c - b*s;
++        out[i1] = a*s + b*c;
++    }
++}
++
+ template<typename T>

@@ -13,11 +13,11 @@ ROOT="$PWD"
 
 LLAMA_COMMIT="${LLAMA_COMMIT:-d81235049384534c167caea52b85a694f6103d14}"   # llama.cpp commit validated against the patches
 WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # whisper.cpp v1.9.3
-# stable-diffusion.cpp: upstream e7b7ec6 with e239e4b (the native ggml GLU) cherry-picked
-# on top. The upstream commit 37bc88b between them asks for a ggml API this ggml does not
-# have (ggml_backend_sched_set_compute_callback), so it is left out; the GLU refactor
-# itself only needs ggml_swiglu/ggml_geglu_swapped, which the Metal backend implements.
-SD_COMMIT="${SD_COMMIT:-cdc40947f01dc7d8ee09323c82bea35564afa0e9}"  # stable-diffusion.cpp commit validated for image gen
+# stable-diffusion.cpp: upstream e7b7ec6 with two commits cherry-picked on top, because the
+# commits between them and master ask for a ggml API this ggml does not have
+# (ggml_backend_sched_set_compute_callback): e239e4b (the native ggml GLU) and 133087d
+# (auto-fit prefers a discrete GPU over an integrated one).
+SD_COMMIT="${SD_COMMIT:-a99e39ef0b5536cd15f01df4423e862d395018d8}"  # stable-diffusion.cpp commit validated for image gen
 # The image engine stays on the ggml commit its Metal patches were written against: upstream
 # split ggml-metal.metal into kernels/ and moved the flash-attention kernels into per-type
 # files, so the AMD backend would have to be rewritten for it. The sd.cpp code above moves
@@ -397,9 +397,11 @@ build_image_engine() {
     # precision, and this ggml only has the two per-op setters it replaces.
     git apply --include='ggml/include/ggml.h' --include='ggml/src/ggml.c' -p1 "$ROOT/patches/image/0068-image-ggml-prec-set-acc.patch"
     # ggml_rope_apply: the newer sd.cpp code applies precomputed rotary matrices with it. The
-    # op does not exist in this ggml, so the CPU implementation is backported; the Metal
-    # backend reports the op unsupported and the scheduler runs it on the CPU.
+    # op does not exist in this ggml, so the CPU implementation is backported by 0069 and the
+    # Metal kernel is added by 0070: without it the scheduler moves every attention's q and k
+    # to the host on each step, which was most of the DiT's time on MOSS-Image.
     git apply --include='ggml/include/ggml.h' --include='ggml/src/ggml.c' --include='ggml/src/ggml-cpu/*' -p1 "$ROOT/patches/image/0069-image-ggml-rope-apply.patch"
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0070-image-metal-rope-apply.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
