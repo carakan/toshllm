@@ -474,7 +474,8 @@ final class ModelStore: ObservableObject {
         let dest = dir.appendingPathComponent(fileName)
         let names = componentNames(fileName: fileName, remote: remote, former: formerFileNames)
         if fileIndex?.file(namedAny: names, preferredDirectory: dir) != nil { return }
-        if fileIndex?.sidecar(namedAny: names, preferredDirectory: dir) != nil { return }
+        if fileIndex?.sidecar(namedAny: sidecarNames(fileName: fileName, former: formerFileNames),
+                              preferredDirectory: dir) != nil { return }
         let key = fileName.precomposedStringWithCanonicalMapping.lowercased()
         guard !componentChecks.contains(key),
               !downloads.contains(where: { $0.destination == dest && $0.error == nil }) else { return }
@@ -486,7 +487,9 @@ final class ModelStore: ObservableObject {
             let existing = await Task.detached(priority: .utility) {
                 let index = ModelFileIndex.scan(in: root)
                 return index.file(namedAny: names, preferredDirectory: dir)
-                    ?? index.sidecar(namedAny: names, preferredDirectory: dir)
+                    ?? index.sidecar(namedAny: ModelFileIndex.sidecarNames(fileName: fileName,
+                                                                          former: formerFileNames),
+                                     preferredDirectory: dir)
             }.value
             guard let self else { return }
             componentChecks.remove(key)
@@ -514,13 +517,23 @@ final class ModelStore: ObservableObject {
         if let match = fileIndex?.file(namedAny: names, preferredDirectory: imagenDirectory) { return match }
         // A component can be a sidecar file rather than a model, e.g. the
         // tokenizer.json Qwen3.5 needs, and those are not in the model index.
-        return fileIndex?.sidecar(namedAny: names, preferredDirectory: imagenDirectory)
+        return fileIndex?.sidecar(namedAny: sidecarNames(fileName: component.fileName,
+                                                          former: component.formerFileNames),
+                                  preferredDirectory: imagenDirectory)
     }
 
     private func componentNames(fileName: String, remote: URL?, former: [String] = []) -> [String] {
         guard let sourceName = remote?.lastPathComponent, !sourceName.isEmpty,
               sourceName.caseInsensitiveCompare(fileName) != .orderedSame else { return [fileName] + former }
         return [fileName, sourceName] + former
+    }
+
+    /// A sidecar is matched only by the name the app manages. The name of the
+    /// file on the server is not enough: a generic tokenizer.json that belongs
+    /// to another model would satisfy the component and be handed over as the
+    /// wrong vocabulary.
+    private func sidecarNames(fileName: String, former: [String] = []) -> [String] {
+        ModelFileIndex.sidecarNames(fileName: fileName, former: former)
     }
 
     func componentPath(_ component: ImageGenComponent) -> URL {
