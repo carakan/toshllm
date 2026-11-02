@@ -349,6 +349,23 @@ final class ModelDetectionTests: XCTestCase {
         XCTAssertEqual(GGUFFile.totalSize(at: managed.appendingPathComponent("big-00001-of-00002.gguf").path), 10)
     }
 
+    func testASymlinkedModelReadsTheSizeOfTheFileBehindIt() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = dir.appendingPathComponent("store", isDirectory: true)
+        let managed = dir.appendingPathComponent("imagen", isDirectory: true)
+        try FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: true)
+        let real = store.appendingPathComponent("plain-Q4_0.gguf")
+        try Data(repeating: 1, count: 4).write(to: real)
+        let link = managed.appendingPathComponent("plain-Q4_0.gguf")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+
+        // The size of a symlinked model is the size of the file behind it, not
+        // the length of the link target.
+        XCTAssertEqual(GGUFFile.totalSize(at: link.path), 4)
+    }
+
     func testRecursiveFileIndexFindsAModelThatIsASymlink() throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
