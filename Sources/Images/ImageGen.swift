@@ -456,6 +456,11 @@ enum ImageGenCatalog {
                                           fluxSchnell, mossImageSFT, qwenImage21Q6, qwenImage21TurboQ6, qwenImage,
                                           qwenImage21Q8, qwenImage21TurboQ8, flux2Dev]
 
+    /// The newest families the engine knows. They get their own one-click entries
+    /// in the Images tab, so a model that arrived after the curated list is not
+    /// buried inside the model dropdown.
+    static let newArrivals: [ImageGenModel] = [mossImageSFT]
+
     /// The best model this GPU can run: the highest min-VRAM tier that fits, and
     /// within a tie the earliest listed (curated preference).
     static func recommended(for hw: HardwareInfo) -> ImageGenModel? {
