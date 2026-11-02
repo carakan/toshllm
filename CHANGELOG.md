@@ -13,6 +13,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **Images: the image engine's stable-diffusion.cpp half moves to upstream master,** which also brings FLUX.3 and Chroma; its Metal backend stays on the ggml commit the AMD patches were written against.
 - **Images: the gated activations run as one fused GLU,** taken from upstream, so the diffusion step spends fewer kernels on the same maths; the same upstream work fixes SDXL models that ship the UNet alone, with the diffusers tensor names.
+- **Images: the engine applies the rotary tables of attention on the GPU,** which used to move every attention's queries and keys to the CPU on each step, and it picks the discrete card over an integrated one when the model fits it by itself; a 1024x1024 MOSS-Image SFT image goes from 4 min 31 s to 4 min 21 s at 20 steps on a Radeon RX 6800 XT.
 
 ### Fixed
 
