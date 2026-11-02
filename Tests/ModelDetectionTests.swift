@@ -301,6 +301,54 @@ final class ModelDetectionTests: XCTestCase {
         XCTAssertTrue(index.llmFiles.isEmpty)
     }
 
+    func testAForeignTokenizerJsonDoesNotSatisfyTheMossTokenizerComponent() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let managed = dir.appendingPathComponent("imagen", isDirectory: true)
+        let encoders = dir.appendingPathComponent("text_encoder", isDirectory: true)
+        try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: encoders, withIntermediateDirectories: true)
+        // The tokenizer.json of another model, next to its encoder.
+        try Data([1, 2, 3]).write(to: encoders.appendingPathComponent("tokenizer.json"))
+
+        let component = ImageGenCatalog.mossImageSFT.components.first { $0.flag == "--tokenizer" }
+        let names = ModelFileIndex.sidecarNames(fileName: component?.fileName ?? "tokenizer_qwen3.5.json")
+        // The name of the file on the server is not asked for: a tokenizer.json
+        // that belongs to another model is the wrong vocabulary.
+        XCTAssertFalse(names.contains("tokenizer.json"))
+
+        let index = ModelFileIndex.scan(in: dir)
+        XCTAssertNil(index.sidecar(namedAny: names, preferredDirectory: managed))
+
+        // The file the app manages is found.
+        let managedTokenizer = managed.appendingPathComponent("tokenizer_qwen3.5.json")
+        try Data([1, 2, 3]).write(to: managedTokenizer)
+        let refreshed = ModelFileIndex.scan(in: dir)
+        XCTAssertEqual(refreshed.sidecar(namedAny: names, preferredDirectory: managed)?.path,
+                       managedTokenizer.path)
+    }
+
+    func testASymlinkedShardCountsTheSizeOfTheModelBehindIt() throws {
+        let dir = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = dir.appendingPathComponent("store", isDirectory: true)
+        let managed = dir.appendingPathComponent("imagen", isDirectory: true)
+        try FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: managed, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 4).write(to: store.appendingPathComponent("big-00001-of-00002.gguf"))
+        try Data(repeating: 2, count: 6).write(to: store.appendingPathComponent("big-00002-of-00002.gguf"))
+        for name in ["big-00001-of-00002.gguf", "big-00002-of-00002.gguf"] {
+            try FileManager.default.createSymbolicLink(
+                at: managed.appendingPathComponent(name),
+                withDestinationURL: store.appendingPathComponent(name))
+        }
+
+        // The size of a symlinked shard is the size of the model behind it, not
+        // the length of the link target: the total decides whether the model
+        // fits and whether a speculative head matches it.
+        XCTAssertEqual(GGUFFile.totalSize(at: managed.appendingPathComponent("big-00001-of-00002.gguf").path), 10)
+    }
+
     func testRecursiveFileIndexFindsAModelThatIsASymlink() throws {
         let dir = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

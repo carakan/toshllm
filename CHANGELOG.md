@@ -26,6 +26,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **Chat: a tool call that writes a long file no longer stops the engine as if it had hung (#184).** The watchdog counted only text, and a tool call's arguments arrive without any; the server log now says which limit stopped it.
 - **LLMs: an MTP head kept in the `MTP` folder beside its model is used.** On a disk that ignores case the folder was read twice, so the head looked like two and none was chosen.
+- **Models: a model that is a symlink into the central store is found again and reads with the size of the file behind it,** instead of the size of the link; a file that goes with a model, such as the tokenizer of Qwen3.5, is found without becoming a model of its own, and a tokenizer.json that belongs to another model is never used as its vocabulary.
 
 ## [0.88.0] - 2026-11-18
 
