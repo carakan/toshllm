@@ -261,6 +261,8 @@ struct ImageControls: View {
 
             if server.state == .running && serverGPUOverlap { serverBusyWarning }
 
+            newArrivalsRow
+
             ForEach($pool.configs) { $cfg in
                 if pool.configs.count == 1 {
                     ImageInstanceForm(cfg: $cfg,
@@ -292,6 +294,49 @@ struct ImageControls: View {
                             "On quitting the app, deletes the generated images (toshllm_*) from the output folder, so the date-named files don't pile up."))
             }
             .font(.callout)
+        }
+    }
+
+    /// One-click entries for the models that arrived after the curated list, such
+    /// as MOSS-Image SFT. Picking one puts it on the first instance and fetches
+    /// its files when they are not on disk yet.
+    private var newArrivalsRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(loc.t("Novedades", "New arrivals")).font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ForEach(ImageGenCatalog.newArrivals) { m in
+                    let ready = ImageGenerator.installed(m, in: models)
+                    let needs = loc.t("Necesita %@ GB de VRAM.", "Needs %@ GB of VRAM.",
+                                      String(Int(m.minVRAMGB)))
+                    let help = ready
+                        ? loc.t("Ya está instalado: púsalo para usarlo en la primera instancia.",
+                                "Already installed: click to use it on the first instance.")
+                        : m.detail(loc.isSpanish) + " " + needs
+                    Button { pickNewArrival(m) } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: ready ? "checkmark.circle.fill" : "arrow.down.circle")
+                                .font(.caption2)
+                                .foregroundStyle(ready ? Color.green : Color.accentColor)
+                            Text(m.name).font(.caption)
+                        }
+                    }
+                    .buttonStyle(GlassPillButtonStyle())
+                    .disabled(pool.anyBusy)
+                    .help(help)
+                }
+            }
+        }
+    }
+
+    /// Picks the model on the first instance and fetches its files when missing.
+    private func pickNewArrival(_ model: ImageGenModel) {
+        guard !pool.configs.isEmpty else { return }
+        pool.configs[0].modelID = model.id
+        pool.configs[0].steps = model.defaultSteps
+        guard !ImageGenerator.installed(model, in: models) else { return }
+        for comp in model.components {
+            models.downloadImageComponent(urlString: comp.urlString, fileName: comp.fileName,
+                                          formerFileNames: comp.formerFileNames)
         }
     }
 
