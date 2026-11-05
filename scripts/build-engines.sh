@@ -13,11 +13,16 @@ ROOT="$PWD"
 
 LLAMA_COMMIT="${LLAMA_COMMIT:-d81235049384534c167caea52b85a694f6103d14}"   # llama.cpp commit validated against the patches
 WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # whisper.cpp v1.9.3
-# stable-diffusion.cpp: upstream e7b7ec6 with two commits cherry-picked on top, because the
+# stable-diffusion.cpp: upstream e7b7ec6 with commits cherry-picked on top, because the
 # commits between them and master ask for a ggml API this ggml does not have
-# (ggml_backend_sched_set_compute_callback): e239e4b (the native ggml GLU) and 133087d
-# (auto-fit prefers a discrete GPU over an integrated one).
-SD_COMMIT="${SD_COMMIT:-a99e39ef0b5536cd15f01df4423e862d395018d8}"  # stable-diffusion.cpp commit validated for image gen
+# (ggml_backend_sched_set_compute_callback, the ggml-ext registry, GGML_GLU_OP_SITU).
+# The list is applied in order by build_image_engine, so the tree is reproducible from
+# upstream alone: e239e4b (the native ggml GLU), 133087d (auto-fit prefers a discrete GPU
+# over an integrated one), 250ea6e (the CUDA layer split), b4d6b83 (integer LoRA scalars
+# convert to FP32), 6225bf8 (MOSS reads the qkv slices as views) and d135894 (the
+# MiniMax-H3 latent hires pass).
+SD_COMMIT="${SD_COMMIT:-e7b7ec6}"                                   # stable-diffusion.cpp base commit
+SD_CHERRY_PICKS="${SD_CHERRY_PICKS:-e239e4b 133087d 250ea6e b4d6b83 6225bf8 d135894}"
 # The image engine stays on the ggml commit its Metal patches were written against: upstream
 # split ggml-metal.metal into kernels/ and moved the flash-attention kernels into per-type
 # files, so the AMD backend would have to be rewritten for it. The sd.cpp code above moves
@@ -292,6 +297,19 @@ build_image_engine() {
     git -C ggml checkout -- . 2>/dev/null || true
     git checkout -- . 2>/dev/null || true
     git checkout -qf "$SD_COMMIT"
+    # The upstream commits this engine needs are cherry-picked on top of the base, so the tree
+    # comes from upstream alone and no local commit has to be pushed anywhere. Each one is
+    # checked out as a commit of its own, then the whole set is committed together.
+    for pick in ${=SD_CHERRY_PICKS}; do
+        if ! git cherry-pick -n "$pick"; then
+            echo "ERROR: cannot cherry-pick $pick onto $SD_COMMIT" >&2
+            git cherry-pick --abort 2>/dev/null || true
+            exit 1
+        fi
+    done
+    if [ -n "$SD_CHERRY_PICKS" ]; then
+        git commit -q -m "ToshLLM: the upstream commits cherry-picked onto $SD_COMMIT"
+    fi
     git submodule sync --recursive
     retry_git env GIT_HTTP_LOW_SPEED_LIMIT=2000 GIT_HTTP_LOW_SPEED_TIME=30 \
         git submodule update --init --recursive

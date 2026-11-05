@@ -46,6 +46,18 @@ because its decode block does not match at wider context. The build script asser
 are expected to reject and stops instead of shipping a backend missing one. Do not remove that
 check.
 
+## The image engine's upstream commits
+
+The image engine is not one upstream commit but a base plus a list of commits cherry-picked onto
+it, both named in `scripts/build-engines.sh` as `SD_COMMIT` and `SD_CHERRY_PICKS`. The base is
+`e7b7ec6`; the list holds the upstream work this engine needs and upstream master's own
+intervening commits do not, because those ask for ggml APIs this ggml does not have.
+
+The list is applied in order and committed as one, so the tree is reproducible from upstream
+alone: no local commit has to be pushed anywhere for a fresh clone or a CI run to build the
+engine. To move the engine, add the upstream commit to the list rather than to a local branch.
+
+
 ## Changing one
 
 The vendor tree carries every patch at once, so `git diff` there is all of them, and it may also
