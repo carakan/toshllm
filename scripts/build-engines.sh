@@ -11,6 +11,21 @@ set -e
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
+# Strips the debug symbols and the local symbols from a binary, so the shipped engine
+# carries no DWARF and no symbol table. The binaries are already built Release, which
+# leaves the symbol table behind: it names every function and its file, which is both
+# size and a map of the source. STRIP=0 keeps them, for a build meant to be debugged.
+# The Metal libraries next to the binaries are left alone: a .metallib has no symbols
+# to strip, and the runtime reads the source it was built from.
+strip_binaries() {
+    [ "${STRIP:-1}" = 1 ] || return 0
+    local bin
+    for bin in "$@"; do
+        [ -f "$bin" ] || continue
+        strip -S -x "$bin"
+    done
+}
+
 LLAMA_COMMIT="${LLAMA_COMMIT:-d81235049384534c167caea52b85a694f6103d14}"   # llama.cpp commit validated against the patches
 WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # whisper.cpp v1.9.3
 # stable-diffusion.cpp: upstream e7b7ec6 with commits cherry-picked on top, because the
@@ -21,8 +36,20 @@ WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # w
 # over an integrated one), 250ea6e (the CUDA layer split), b4d6b83 (integer LoRA scalars
 # convert to FP32), 6225bf8 (MOSS reads the qkv slices as views) and d135894 (the
 # MiniMax-H3 latent hires pass).
+# Then the commits after d135894 that still build on this ggml: fdfc913 (ControlNet Union
+# for SDXL), 7bcd4ce (the LoRA multiplier and the prompt spacing in the metadata),
+# b43af40 (the Flux scheduler counts the patch tokens), b43ce4b (the Krea2 text-fusion
+# names survive a Kohya LoRA), fc350be (the server reports the generation stages),
+# f977add (Metal does not use batch_cfg), d22dcda (the device type is cached),
+# cfdf3cf (the LoRAs merge in F32), 008b9a2 (the MiniMax-H3 token_refiner weights),
+# 991f825 (the MSVC parallelism), fbb381d/c44cbec/d36f72b (the README),
+# 46da352 (the layer split follows the device capacity), 73fef08 (the server web UI)
+# and a3f46b6 (the server queue limits are configurable).
+# The commits between them and upstream master that are left out ask for the ggml-ext
+# registry (45a63ac), the ggml chunk helper of the runner refactor (56070ea) or the
+# ggml compute callback (ddc367a), all of which need the newer ggml below.
 SD_COMMIT="${SD_COMMIT:-e7b7ec6}"                                   # stable-diffusion.cpp base commit
-SD_CHERRY_PICKS="${SD_CHERRY_PICKS:-e239e4b 133087d 250ea6e b4d6b83 6225bf8 d135894}"
+SD_CHERRY_PICKS="${SD_CHERRY_PICKS:-e239e4b 133087d 250ea6e b4d6b83 6225bf8 d135894 fdfc913 7bcd4ce b43af40 b43ce4b fc350be f977add d22dcda cfdf3cf 008b9a2 991f825 fbb381d c44cbec 46da352 d36f72b 73fef08 a3f46b6}"
 # The image engine stays on the ggml commit its Metal patches were written against: upstream
 # split ggml-metal.metal into kernels/ and moved the flash-attention kernels into per-type
 # files, so the AMD backend would have to be rewritten for it. The sd.cpp code above moves
@@ -212,6 +239,8 @@ build_engine() {
             METAL_PRECOMPILE=0
         fi
     fi
+    strip_binaries build-static/bin/llama-server build-static/bin/llama-bench \
+                   build-static/bin/llama-perplexity build-static/bin/test-backend-ops
     echo "engine ready at $PWD/build-static/bin (arch: $ARCH)"
     cd "$ROOT"
 }
@@ -275,6 +304,7 @@ build_whisper_engine() {
             METAL_PRECOMPILE=0
         fi
     fi
+    strip_binaries build-static/bin/whisper-cli build-static/bin/whisper-server
     echo "speech-to-text engine ready at $PWD/build-static/bin (arch: $ARCH)"
     cd "$ROOT"
 }
@@ -420,6 +450,10 @@ build_image_engine() {
     # to the host on each step, which was most of the DiT's time on MOSS-Image.
     git apply --include='ggml/include/ggml.h' --include='ggml/src/ggml.c' --include='ggml/src/ggml-cpu/*' -p1 "$ROOT/patches/image/0069-image-ggml-rope-apply.patch"
     git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0070-image-metal-rope-apply.patch"
+    # TensorStorage::logical_ne0: the ControlNet Union code of the newer upstream asks for
+    # the width the model reads a tensor as. Upstream added it with the packed INT4 convrot,
+    # that this engine does not have, so the accessor is backported on its own.
+    git apply -p1 "$ROOT/patches/image/0071-image-tensor-storage-logical-ne0.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
@@ -465,6 +499,7 @@ build_image_engine() {
             METAL_PRECOMPILE=0
         fi
     fi
+    strip_binaries build-static/bin/sd-cli
     echo "image engine ready at $PWD/build-static/bin (arch: $ARCH)"
     cd "$ROOT"
 }

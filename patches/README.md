@@ -57,6 +57,12 @@ The list is applied in order and committed as one, so the tree is reproducible f
 alone: no local commit has to be pushed anywhere for a fresh clone or a CI run to build the
 engine. To move the engine, add the upstream commit to the list rather than to a local branch.
 
+The list stops where the ggml does not. Upstream moved the model-specific operators into the
+ggml-ext registry (45a63ac), replaced the QKV split helpers with the runner's chunk helper
+(56070ea) and unified the runner's execution (ddc367a); those ask for ggml APIs that arrived
+with the `kernels/` split this engine's ggml predates. The commits between them that do not
+need those APIs are in the list, so the engine takes the upstream work it can build on.
+
 
 ## Changing one
 

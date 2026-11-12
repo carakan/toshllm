@@ -15,10 +15,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Images: the gated activations run as one fused GLU,** taken from upstream, so the diffusion step spends fewer kernels on the same maths; the same upstream work fixes SDXL models that ship the UNet alone, with the diffusers tensor names.
 - **Images: the engine applies the rotary tables of attention on the GPU,** which used to move every attention's queries and keys to the CPU on each step, and it picks the discrete card over an integrated one when the model fits it by itself; a 1024x1024 MOSS-Image SFT image goes from 4 min 31 s to 4 min 21 s at 20 steps on a Radeon RX 6800 XT.
 - **Images: the image engine takes four more upstream commits,** for the CUDA layer split, the integer LoRA scalars, the MOSS qkv views and the MiniMax-H3 latent hires; they are cherry-picked onto the base commit, so the engine is built from upstream alone.
+- **Images: the image engine takes sixteen more upstream commits,** for the ControlNet Union on SDXL, the Flux scheduler's patch tokens, the Krea2 text-fusion names in a Kohya LoRA, the Metal batch_cfg, the device type cache, the LoRAs that merge in F32, the MiniMax-H3 token_refiner weights, the layer split that follows the device capacity, and the server's generation stages and queue limits; they are cherry-picked onto the base commit as well.
+- **The app and the engines ship without debug symbols.** The release builds kept the symbol table, which names every function and the file it came from; the binaries are now stripped, and `STRIP=0` keeps the symbols for a build meant to be debugged.
 
 ### Fixed
 
 - **Models: a model that is a symlink into the central store is found again and reads with the size of the file behind it,** instead of the size of the link; a file that goes with a model, such as the tokenizer of Qwen3.5, is found without becoming a model of its own, and a tokenizer.json that belongs to another model is never used as its vocabulary.
+- **Images: the Flux scheduler counts the patch tokens,** so the denoising steps of a Flux model no longer run on a count that does not match the image.
+- **Images: a Kohya LoRA keeps the Krea2 text-fusion names,** which the conversion used to drop.
+- **Images: the LoRAs merge in F32** when the conversion changes the tensor type, instead of merging in the narrower type.
+- **Images: the MiniMax-H3 Diffusers LoRA applies the token_refiner weights,** which the load used to skip.
 
 ## [0.87.34] - 2026-11-11
 

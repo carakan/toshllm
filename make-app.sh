@@ -55,6 +55,12 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$SWIFT_BIN" "$APP/Contents/MacOS/ToshLLM"
+# The release build keeps the symbol table, which names every function and its file.
+# Strip it so the shipped app carries no symbol map of its source. STRIP=0 keeps the
+# symbols, for a build meant to be debugged.
+if [ "${STRIP:-1}" = 1 ]; then
+    strip -S -x "$APP/Contents/MacOS/ToshLLM"
+fi
 [ -f AppIcon.icns ] && cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # llama.cpp binaries (static build = portable): vendor/ first (reproducible,
