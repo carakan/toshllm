@@ -1,0 +1,44 @@
+From e9c3b152bfce08f973e6a7a36de5dad56059baca Mon Sep 17 00:00:00 2001
+From: Yuri Khrustalev <ykhrustalev@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 07:35:39 -0400
+Subject: [PATCH] metal : null-check buffer alloc to fix OOM crash
+ (llama/25371)
+
+* metal : null-check ggml_metal_buffer_init result to avoid OOM crash
+
+ggml_backend_metal_buffer_type_alloc_buffer used the result of
+ggml_metal_buffer_init without checking for NULL. ggml_metal_buffer_init
+returns NULL when the underlying Metal allocation fails (e.g. an
+out-of-memory condition), and the following ggml_metal_buffer_is_shared(res)
+call dereferences it, turning a recoverable allocation failure into a hard
+crash (EXC_BAD_ACCESS). This is easy to hit on memory-constrained devices
+such as iOS when a model/context exceeds the available Metal budget.
+
+Log the failure using the existing GGML_LOG_ERROR convention and return
+NULL so the allocator surfaces a diagnosable error up the stack instead of
+crashing.
+
+* cont : fix log
+
+---------
+
+Co-authored-by: Georgi Gerganov <ggerganov@gmail.com>
+---
+ src/ggml-metal/ggml-metal.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/ggml-metal/ggml-metal.cpp b/src/ggml-metal/ggml-metal.cpp
+index e5b2ee8a..9756d470 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -206,2 +206,7 @@ static ggml_backend_buffer_t ggml_backend_metal_buffer_type_alloc_buffer(ggml_ba
+ 
++    if (res == NULL) {
++        GGML_LOG_ERROR("%s: failed to allocate Metal buffer of %zu bytes (out of memory)\n", __func__, size);
++        return NULL;
++    }
++
+     ggml_backend_buffer_i buf_i = ggml_metal_buffer_is_shared(res)
+-- 
+2.56.1
+

@@ -1,0 +1,25 @@
+From 5890241da181cf6fbf5cff05a9fb2648a1454951 Mon Sep 17 00:00:00 2001
+From: Georgi Gerganov <ggerganov@gmail.com>
+Date: Sat, 19 Sep 2026 11:33:03 +0300
+Subject: [PATCH] metal : fix FA support checks (llama/29122)
+
+---
+ src/ggml-metal/ggml-metal-device.m | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-device.m
+index 952d1c0a..0f42d570 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1735,2 +1735,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+             }
++            if (op->src[1]->ne[0] == 72 && op->src[1]->ne[0] != op->src[2]->ne[0]) {
++                return false;
++            }
++            if (op->src[1]->ne[0] < op->src[2]->ne[0]) {
++                return false;
++            }
+             if (op->src[1]->type != op->src[2]->type) {
+-- 
+2.56.1
+
