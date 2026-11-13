@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 - **Images: MiniMax-H3-Image.** The image model beside MiniMax-H3, in the GGUF quantizations Q2_K to Q5_K_M; it generates and edits from text and reference images, and brings the P-H3-Image text connector with the six-step PDD output heads. It arrives with the upstream engine rather than as a patch of its own.
+- **Images: the Images tab serves the newest families the engine knows, each with a GGUF quantization to download.** MiniMax-H3-Image and its distilled P-H3-Image build, FLUX.3 Image Klein and its undistilled base, Krea-2 Turbo and Base, Chroma, Fibo-2.0 dev and edit turbo, ERNIE-Image and ERNIE-Image Turbo, IdeoGram 4 with its unconditional transformer, Boogu-Image Turbo, SEFI 5B Turbo, LongCat-Image, Mage-Flow edit turbo, LLaDA-Image Turbo, HiDream-O1 and SenseNova U1.5. Every entry names the VAE and the text encoder the engine's own documentation pairs with it — the Qwen3-VL encoders come as GGUF too — so one click installs a model that runs. A model whose weights have no GGUF release is not listed.
 - **Images: MOSS-Image SFT.** A 5B model that follows prompts and edits from reference images, with the FLUX.2 VAE and a Qwen3.5 9B text encoder. On a Radeon RX 6800 XT a 1024x1024 image takes about 4 min 30 s at 20 steps.
 
 ### Changed

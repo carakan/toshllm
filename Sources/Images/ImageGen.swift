@@ -15,7 +15,7 @@ import UniformTypeIdentifiers
 
 /// One downloadable piece of an image model, tagged with the sd-cli flag it maps to.
 struct ImageGenComponent: Identifiable {
-    enum Kind { case checkpoint, diffusion, vae, audioVAE, connectors, textEncoder, llmVision, t5, clipL, tokenizer }
+    enum Kind { case checkpoint, diffusion, uncondDiffusion, vae, audioVAE, connectors, textEncoder, llmVision, t5, clipL, tokenizer }
     let kind: Kind
     let urlString: String
     let fileName: String
@@ -29,6 +29,7 @@ struct ImageGenComponent: Identifiable {
         switch kind {
         case .checkpoint:  return "--model"
         case .diffusion:   return "--diffusion-model"
+        case .uncondDiffusion: return "--uncond-diffusion-model"
         case .vae:         return "--vae"
         case .audioVAE:    return "--audio-vae"
         case .connectors:  return "--embeddings-connectors"
@@ -44,6 +45,7 @@ struct ImageGenComponent: Identifiable {
         switch kind {
         case .checkpoint:  return spanish ? "Modelo" : "Model"
         case .diffusion:   return spanish ? "Modelo de difusión" : "Diffusion model"
+        case .uncondDiffusion: return spanish ? "Modelo sin condición" : "Unconditional model"
         case .vae:         return "VAE"
         case .audioVAE:    return spanish ? "VAE de audio" : "Audio VAE"
         case .connectors:  return spanish ? "Conectores" : "Connectors"
@@ -448,18 +450,357 @@ enum ImageGenCatalog {
         defaultSteps: 20, cfgScale: 3.0, minVRAMGB: 10, recommendable: false,
         maxLongEdge: 1024, nativeLongEdge: 1024)
 
+    /// The Qwen3-VL-4B encoder and its vision projector, the pair the newest families share.
+    private static func qwen3vl4b() -> [ImageGenComponent] {
+        [ImageGenComponent(kind: .textEncoder,
+            urlString: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+            fileName: "Qwen3VL-4B-Instruct-Q4_K_M.gguf", sizeGB: 2.50),
+         ImageGenComponent(kind: .llmVision,
+            urlString: "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-4B-Instruct-F16.gguf",
+            fileName: "mmproj-Qwen3VL-4B-Instruct-F16.gguf", sizeGB: 0.84)]
+    }
+
+    /// The Qwen3-VL-8B pair, shared with Qwen-Image 2.1.
+    private static func qwen3vl8b() -> [ImageGenComponent] {
+        [ImageGenComponent(kind: .textEncoder,
+            urlString: "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+            fileName: "Qwen3VL-8B-Instruct-Q4_K_M.gguf", sizeGB: 5.03),
+         ImageGenComponent(kind: .llmVision,
+            urlString: "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+            fileName: "mmproj-Qwen3VL-8B-Instruct-F16.gguf", sizeGB: 1.16)]
+    }
+
+    /// The P-H3 text connector, which turns a plain Qwen3-VL-4B into the P-H3-Image encoder.
+    private static let pH3Connector = ImageGenComponent(kind: .connectors,
+        urlString: "https://huggingface.co/PrunaAI/P-H3-Image/resolve/main/text_connector/diffusion_pytorch_model.safetensors",
+        fileName: "p-h3-image_text_connector.safetensors", sizeGB: 0.26)
+
+    /// MiniMax-H3-Image: text-to-image and reference editing from one checkpoint, on the
+    /// model's own six-step schedule. The light P-H3-Image encoder keeps the download at
+    /// 17 GB; the engine also takes the 32B MiniMax-H3 encoder from leejet/MiniMax-H3-GGUF.
+    static let minimaxH3Image = ImageGenModel(
+        name: "MiniMax-H3-Image",
+        detailES: "El modelo de imagen de MiniMax-H3: texto a imagen y edición desde referencias, en 6 pasos. Licencia propia de MiniMax.",
+        detailEN: "The image model beside MiniMax-H3: text-to-image and reference editing in 6 steps. MiniMax's own license.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/unsloth/MiniMax-H3-Image-GGUF/resolve/main/minimax_h3_image_pruned-Q4_K_M.gguf",
+                fileName: "minimax_h3_image_pruned-Q4_K_M.gguf", sizeGB: 12.72),
+            ImageGenComponent(kind: .vae,
+                urlString: "https://huggingface.co/Comfy-Org/MiniMax-H3-Image/resolve/main/vae/minimax_h3_image_vae_fp16.safetensors",
+                fileName: "minimax_h3_image_vae_fp16.safetensors", sizeGB: 1.17),
+        ] + qwen3vl4b() + [pH3Connector],
+        defaultSteps: 6, cfgScale: 1.0, minVRAMGB: 12, recommendable: false,
+        maxLongEdge: 1024, nativeLongEdge: 1024, maxReferenceImages: 4,
+        extraArgs: ["--sampling-method", "euler", "--sigmas", "minimax-h3-image"])
+
+    /// P-H3-Image: Pruna's distilled build of the same architecture, eight steps.
+    static let pH3Image = ImageGenModel(
+        name: "P-H3-Image",
+        detailES: "La versión destilada de MiniMax-H3-Image, en 8 pasos. Texto a imagen y edición desde referencias.",
+        detailEN: "Pruna's distilled MiniMax-H3-Image, in 8 steps. Text-to-image and reference editing.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/AtomicChat/P-H3-Image-GGUF/resolve/main/P-H3-Image-AD-Q4_K.gguf",
+                fileName: "P-H3-Image-AD-Q4_K.gguf", sizeGB: 11.60),
+            ImageGenComponent(kind: .vae,
+                urlString: "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/main/vae/p-h3-image_vae_bf16.safetensors",
+                fileName: "p-h3-image_vae_bf16.safetensors", sizeGB: 5.56),
+        ] + qwen3vl4b() + [pH3Connector],
+        defaultSteps: 8, cfgScale: 1.0, minVRAMGB: 12, recommendable: false,
+        maxLongEdge: 1024, nativeLongEdge: 1024, maxReferenceImages: 4,
+        extraArgs: ["--sampling-method", "euler", "--sigmas", "p-h3-image"])
+
+    /// FLUX.3 Image Klein: the step-distilled FLUX.3, sixteen steps, with editing from
+    /// reference images. The base build of the same architecture follows below.
+    static let flux3Klein = ImageGenModel(
+        name: "Flux.3 Image Klein",
+        detailES: "El FLUX.3 destilado: 16 pasos, texto a imagen y edición desde referencias. Licencia de FLUX.3.",
+        detailEN: "The step-distilled FLUX.3: 16 steps, text-to-image and reference editing. FLUX.3 license.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/leejet/flux-3-image-klein-GGUF/resolve/main/flux3-image-klein-Q4_0.gguf",
+                fileName: "flux3-image-klein-Q4_0.gguf", sizeGB: 3.51),
+            flux2VAE,
+        ] + qwen3vl4b(),
+        defaultSteps: 16, cfgScale: 1.0, minVRAMGB: 8, recommendable: false,
+        maxReferenceImages: 10, extraArgs: ["--sampling-method", "euler"])
+
+    static let flux3KleinBase = ImageGenModel(
+        name: "Flux.3 Image Klein Base",
+        detailES: "La misma arquitectura sin destilar: 20 pasos con guía 3.5, más control sobre el resultado.",
+        detailEN: "The same architecture undistilled: 20 steps at guidance 3.5, with more say over the result.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/leejet/flux-3-image-klein-base-GGUF/resolve/main/flux3-image-klein-base-Q4_0.gguf",
+                fileName: "flux3-image-klein-base-Q4_0.gguf", sizeGB: 3.49),
+            flux2VAE,
+        ] + qwen3vl4b(),
+        defaultSteps: 20, cfgScale: 3.5, minVRAMGB: 8, recommendable: false,
+        maxReferenceImages: 10, extraArgs: ["--sampling-method", "euler"])
+
+    /// Krea-2: Krea's open image model, in a step-distilled Turbo and an undistilled Base.
+    static let krea2Turbo = ImageGenModel(
+        name: "Krea-2 Turbo",
+        detailES: "El modelo abierto de Krea en su versión destilada: 4 pasos. Usa el VAE de Wan 2.1.",
+        detailEN: "Krea's open image model, distilled: 4 steps. Takes the Wan 2.1 VAE.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/Krea-2-Turbo-Q4_K_M.gguf",
+                fileName: "Krea-2-Turbo-Q4_K_M.gguf", sizeGB: 7.22),
+            ImageGenComponent(kind: .vae,
+                urlString: "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+                fileName: "wan_2.1_vae.safetensors", sizeGB: 0.25),
+        ] + qwen3vl4b(),
+        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 10, recommendable: false,
+        extraArgs: ["--sampling-method", "euler"])
+
+    static let krea2Base = ImageGenModel(
+        name: "Krea-2 Base",
+        detailES: "Krea-2 sin destilar: 20 pasos con guía 4.",
+        detailEN: "Krea-2 undistilled: 20 steps at guidance 4.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/BASE/Krea-2-Base-Q4_K_M.gguf",
+                fileName: "Krea-2-Base-Q4_K_M.gguf", sizeGB: 7.26),
+            ImageGenComponent(kind: .vae,
+                urlString: "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+                fileName: "wan_2.1_vae.safetensors", sizeGB: 0.25),
+        ] + qwen3vl4b(),
+        defaultSteps: 20, cfgScale: 4.0, minVRAMGB: 12, recommendable: false,
+        extraArgs: ["--sampling-method", "euler"])
+
+    /// Chroma: the FLUX.1-dev derived model that dropped the CLIP text branch's grip on
+    /// the prompt. Its text encoders are the FLUX pair, so they are shared with Flux.1.
+    static let chroma = ImageGenModel(
+        name: "Chroma",
+        detailES: "12B derivados de FLUX.1-dev, con mejor seguimiento del prompt. Toma los text encoders de FLUX.",
+        detailEN: "12B, derived from FLUX.1-dev, with better prompt following. Takes the FLUX text encoders.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/silveroxides/Chroma-GGUF/resolve/main/chroma-unlocked-v50/chroma-unlocked-v50-Q4_0.gguf",
+                fileName: "chroma-unlocked-v50-Q4_0.gguf", sizeGB: 5.43),
+            fluxVAE("flux_ae-f16.gguf"),
+            ImageGenComponent(kind: .t5,
+                urlString: "https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+                fileName: "t5-v1_1-xxl-encoder-Q4_K_M.gguf", sizeGB: 2.76),
+            ImageGenComponent(kind: .clipL,
+                urlString: "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+                fileName: "clip_l.safetensors", sizeGB: 0.23),
+        ],
+        defaultSteps: 20, cfgScale: 4.0, minVRAMGB: 12, recommendable: false,
+        extraArgs: ["--sampling-method", "euler", "--model-args", "chroma_use_dit_mask=false", "--clip-on-cpu"])
+
+    /// Fibo-2.0: BRIA's model in an undistilled dev build and a four-step edit build.
+    static let fibo2Dev = ImageGenModel(
+        name: "Fibo-2.0 dev",
+        detailES: "El modelo de BRIA sin destilar: 20 pasos con guía 5. Licencia comercial de BRIA.",
+        detailEN: "BRIA's model undistilled: 20 steps at guidance 5. BRIA's commercial license.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/realrebelai/Fibo-2.0_GGUFs/resolve/main/fibo2_dev-Q4_0.gguf",
+                fileName: "fibo2_dev-Q4_0.gguf", sizeGB: 6.59),
+            flux2VAE,
+        ] + qwen3vl4b(),
+        defaultSteps: 20, cfgScale: 5.0, minVRAMGB: 10, recommendable: false,
+        extraArgs: ["--sampling-method", "euler"])
+
+    static let fibo2EditTurbo = ImageGenModel(
+        name: "Fibo-2.0 edit turbo",
+        detailES: "La versión destilada de Fibo-2.0 para edición desde referencias: 4 pasos.",
+        detailEN: "Fibo-2.0 distilled for reference-based editing: 4 steps.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/realrebelai/Fibo-2.0_GGUFs/resolve/main/fibo2_edit_turbo-Q4_0.gguf",
+                fileName: "fibo2_edit_turbo-Q4_0.gguf", sizeGB: 6.59),
+            flux2VAE,
+        ] + qwen3vl4b(),
+        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 10, recommendable: false,
+        maxReferenceImages: 4, extraArgs: ["--sampling-method", "euler"])
+
+    /// ERNIE-Image: Baidu's model, with a small Ministral encoder of its own.
+    static let ernieImage = ImageGenModel(
+        name: "ERNIE-Image",
+        detailES: "El modelo de imagen de Baidu, con su propio codificador Ministral 3B.",
+        detailEN: "Baidu's image model, with its own Ministral 3B encoder.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/unsloth/ERNIE-Image-GGUF/resolve/main/ernie-image-Q4_K_M.gguf",
+                fileName: "ernie-image-Q4_K_M.gguf", sizeGB: 5.02),
+            ImageGenComponent(kind: .vae,
+                urlString: "https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/vae/flux2-vae.safetensors",
+                fileName: "ernie_image_vae.safetensors", sizeGB: 0.34),
+            ImageGenComponent(kind: .textEncoder,
+                urlString: "https://huggingface.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
+                fileName: "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf", sizeGB: 2.15),
+        ],
+        defaultSteps: 20, cfgScale: 5.0, minVRAMGB: 8, recommendable: false)
+
+    static let ernieImageTurbo = ImageGenModel(
+        name: "ERNIE-Image Turbo",
+        detailES: "La versión destilada de ERNIE-Image: 8 pasos con guía 1.",
+        detailEN: "ERNIE-Image distilled: 8 steps at guidance 1.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/unsloth/ERNIE-Image-Turbo-GGUF/resolve/main/ernie-image-turbo-Q4_K_M.gguf",
+                fileName: "ernie-image-turbo-Q4_K_M.gguf", sizeGB: 5.02),
+            ImageGenComponent(kind: .vae,
+                urlString: "https://huggingface.co/Comfy-Org/ERNIE-Image/resolve/main/vae/flux2-vae.safetensors",
+                fileName: "ernie_image_vae.safetensors", sizeGB: 0.34),
+            ImageGenComponent(kind: .textEncoder,
+                urlString: "https://huggingface.co/unsloth/Ministral-3-3B-Instruct-2512-GGUF/resolve/main/Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
+                fileName: "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf", sizeGB: 2.15),
+        ],
+        defaultSteps: 8, cfgScale: 1.0, minVRAMGB: 8, recommendable: false)
+
+    /// IdeoGram 4: the text-rendering specialist. It carries a second, unconditional
+    /// transformer of its own, so the entry has two diffusion files.
+    static let ideogram4 = ImageGenModel(
+        name: "IdeoGram 4",
+        detailES: "Especialista en texto dentro de la imagen. Trae su propio modelo sin condición.",
+        detailEN: "The text-in-image specialist. Ships its own unconditional transformer.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/leejet/ideogram-4-GGUF/resolve/main/ideogram4-Q4_0.gguf",
+                fileName: "ideogram4-Q4_0.gguf", sizeGB: 5.64),
+            ImageGenComponent(kind: .uncondDiffusion,
+                urlString: "https://huggingface.co/leejet/ideogram-4-GGUF/resolve/main/ideogram4_uncond-Q4_0.gguf",
+                fileName: "ideogram4_uncond-Q4_0.gguf", sizeGB: 5.64),
+            flux2VAE,
+        ] + qwen3vl8b(),
+        defaultSteps: 20, cfgScale: 5.0, minVRAMGB: 12, recommendable: false,
+        extraArgs: ["--sampling-method", "euler"])
+
+    /// Boogu-Image: the Turbo build of a newer family, with the FLUX VAE and the 8B encoder.
+    static let booguImageTurbo = ImageGenModel(
+        name: "Boogu-Image Turbo",
+        detailES: "Una familia nueva en su versión destilada: 4 pasos.",
+        detailEN: "A newer family in its distilled build: 4 steps.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/realrebelai/Boogu-Image-Turbo_GGUFs/resolve/main/boogu-turbo-dit-Q4_0.gguf",
+                fileName: "boogu-turbo-dit-Q4_0.gguf", sizeGB: 6.84),
+            fluxVAE("flux_ae-f16.gguf"),
+        ] + qwen3vl8b(),
+        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 10, recommendable: false,
+        extraArgs: ["--sampling-method", "euler"])
+
+    /// SEFI: a small 5B model distilled to four steps, on the FLUX.2 VAE.
+    static let sefi5bTurbo = ImageGenModel(
+        name: "SEFI 5B Turbo",
+        detailES: "5B destilados a 4 pasos. Pequeño y rápido.",
+        detailEN: "5B distilled to 4 steps. Small and quick.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/Sam2x/SeFi-Image-5B-turbo-GGUF/resolve/main/sefi-image-5b-turbo.Q4_1.gguf",
+                fileName: "sefi-image-5b-turbo.Q4_1.gguf", sizeGB: 3.18),
+            flux2VAE,
+        ] + qwen3vl4b(),
+        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 8, recommendable: false,
+        extraArgs: ["--sampling-method", "euler"])
+
+    /// LongCat-Image: Meituan's model, on the FLUX VAE and the Qwen2.5-VL encoder.
+    static let longCatImage = ImageGenModel(
+        name: "LongCat-Image",
+        detailES: "El modelo de imagen de Meituan, con el codificador Qwen2.5-VL.",
+        detailEN: "Meituan's image model, with the Qwen2.5-VL encoder.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/vantagewithai/LongCat-Image-GGUF/resolve/main/org/LongCat-Image-Q4_K_M.gguf",
+                fileName: "LongCat-Image-Q4_K_M.gguf", sizeGB: 3.73),
+            fluxVAE("flux_ae-f16.gguf"),
+            ImageGenComponent(kind: .textEncoder,
+                urlString: "https://huggingface.co/unsloth/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+                fileName: "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf", sizeGB: 4.5),
+        ],
+        defaultSteps: 20, cfgScale: 5.0, minVRAMGB: 10, recommendable: false,
+        extraArgs: ["--sampling-method", "euler", "--flow-shift", "3"])
+
+    /// Mage-Flow: an edit build distilled to four steps; its VAE and vision projector
+    /// ship as GGUF beside the model.
+    static let mageFlowEditTurbo = ImageGenModel(
+        name: "Mage-Flow edit turbo",
+        detailES: "Edición desde referencias en 4 pasos. Su VAE viaja en GGUF.",
+        detailEN: "Reference-based editing in 4 steps. Its VAE ships as GGUF too.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/gguf-org/mageflow-gguf/resolve/main/mageflow-edit-turbo-nvfp4.gguf",
+                fileName: "mageflow-edit-turbo-nvfp4.gguf", sizeGB: 2.37),
+            ImageGenComponent(kind: .vae,
+                urlString: "https://huggingface.co/gguf-org/mageflow-gguf/resolve/main/pig_mageflow_vae_fp32-f16.gguf",
+                fileName: "pig_mageflow_vae_fp32-f16.gguf", sizeGB: 0.35),
+        ] + qwen3vl4b(),
+        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 8, recommendable: false,
+        maxReferenceImages: 4, extraArgs: ["--sampling-method", "euler"])
+
+    /// LLaDA-Image: a diffusion LLM that carries its own text encoder, connectors and
+    /// tokenizer; only the VAE comes from the original release.
+    static let lladaImageTurbo = ImageGenModel(
+        name: "LLaDA-Image Turbo",
+        detailES: "Un LLM de difusión con su propio codificador y tokenizador: 4 pasos.",
+        detailEN: "A diffusion LLM with its own text encoder and tokenizer: 4 steps.",
+        components: [
+            ImageGenComponent(kind: .diffusion,
+                urlString: "https://huggingface.co/fszontagh/LLaDA-Image-Turbo-GGUF/resolve/main/llada-image-turbo-q8_0.gguf",
+                fileName: "llada-image-turbo-q8_0.gguf", sizeGB: 6.95),
+            ImageGenComponent(kind: .vae,
+                urlString: "https://huggingface.co/inclusionAI/LLaDA-Image-Turbo/resolve/main/vae/diffusion_pytorch_model.safetensors",
+                fileName: "llada_vae.safetensors", sizeGB: 0.17),
+            ImageGenComponent(kind: .textEncoder,
+                urlString: "https://huggingface.co/fszontagh/LLaDA-Image-Turbo-GGUF/resolve/main/llada-image-turbo-text_encoder-q4_K.gguf",
+                fileName: "llada-image-turbo-text_encoder-q4_K.gguf", sizeGB: 9.69),
+            ImageGenComponent(kind: .connectors,
+                urlString: "https://huggingface.co/fszontagh/LLaDA-Image-Turbo-GGUF/resolve/main/llada-image-turbo-connectors.safetensors",
+                fileName: "llada-image-turbo-connectors.safetensors", sizeGB: 0.75),
+            ImageGenComponent(kind: .tokenizer,
+                urlString: "https://huggingface.co/inclusionAI/LLaDA-Image-Turbo/resolve/main/tokenizer/tokenizer.json",
+                fileName: "tokenizer_llada.json", sizeGB: 0.02),
+        ],
+        defaultSteps: 4, cfgScale: 1.0, minVRAMGB: 12, recommendable: false,
+        extraArgs: ["--sampling-method", "euler"])
+
+    /// HiDream-O1: a single-file checkpoint, so it needs no separate VAE or encoder.
+    static let hiDreamO1 = ImageGenModel(
+        name: "HiDream-O1",
+        detailES: "Un solo fichero con todo dentro: ni VAE ni codificador aparte.",
+        detailEN: "One file with everything inside: no separate VAE or encoder.",
+        components: [
+            ImageGenComponent(kind: .checkpoint,
+                urlString: "https://huggingface.co/moonbox-dev/HiDream-O1-Image-GGUF/resolve/main/hidream-o1-image-Q4_K_M.gguf",
+                fileName: "hidream-o1-image-Q4_K_M.gguf", sizeGB: 5.53),
+        ],
+        defaultSteps: 20, cfgScale: 1.0, minVRAMGB: 12, recommendable: false)
+
+    /// SenseNova U1.5: an 8B model that also travels as one checkpoint, at 50 steps.
+    static let senseNovaU15 = ImageGenModel(
+        name: "SenseNova U1.5",
+        detailES: "8B en un solo fichero, a 50 pasos con guía 4.",
+        detailEN: "8B in one file, 50 steps at guidance 4.",
+        components: [
+            ImageGenComponent(kind: .checkpoint,
+                urlString: "https://huggingface.co/realrebelai/SenseNova-U1.5-8B_GGUFs/resolve/main/SenseNova-U1.5-8B-MoT-Q3_K_M.gguf",
+                fileName: "SenseNova-U1.5-8B-MoT-Q3_K_M.gguf", sizeGB: 10.92),
+        ],
+        defaultSteps: 50, cfgScale: 4.0, minVRAMGB: 12, recommendable: false,
+        extraArgs: ["--sampling-method", "euler", "--flow-shift", "3"])
+
     /// Curated order (small to large). Z-Image sits before SDXL so it wins the
     /// 8-12 GB tie as the recommended pick (validated for photorealism on AMD);
     /// klein 9B sits before schnell to win the 16 GB tie the same way.
     static let models: [ImageGenModel] = [sd15, zImageTurbo, sdxlTurbo, qwenImage21Q3, qwenImage21TurboQ3,
                                           flux2Klein4B, qwenImage21Q4, qwenImage21TurboQ4, flux2Klein9B,
                                           fluxSchnell, mossImageSFT, qwenImage21Q6, qwenImage21TurboQ6, qwenImage,
-                                          qwenImage21Q8, qwenImage21TurboQ8, flux2Dev]
+                                          qwenImage21Q8, qwenImage21TurboQ8, flux2Dev,
+                                          sefi5bTurbo, mageFlowEditTurbo, flux3Klein, flux3KleinBase,
+                                          longCatImage, chroma, krea2Turbo, fibo2EditTurbo, fibo2Dev,
+                                          ernieImageTurbo, ernieImage, booguImageTurbo, lladaImageTurbo,
+                                          hiDreamO1, krea2Base, ideogram4, minimaxH3Image, pH3Image, senseNovaU15]
 
     /// The newest families the engine knows. They get their own one-click entries
     /// in the Images tab, so a model that arrived after the curated list is not
     /// buried inside the model dropdown.
-    static let newArrivals: [ImageGenModel] = [mossImageSFT]
+    static let newArrivals: [ImageGenModel] = [mossImageSFT, minimaxH3Image, pH3Image,
+                                               flux3Klein, krea2Turbo]
 
     /// The best model this GPU can run: the highest min-VRAM tier that fits, and
     /// within a tie the earliest listed (curated preference).
