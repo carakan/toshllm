@@ -1,0 +1,479 @@
+diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
+--- a/ggml/include/ggml.h
++++ b/ggml/include/ggml.h
+@@ -556,6 +556,7 @@
+         GGML_OP_SOFT_MAX_BACK,
+         GGML_OP_ROPE,
+         GGML_OP_ROPE_BACK,
++        GGML_OP_ROPE_APPLY,
+         GGML_OP_CLAMP,
+         GGML_OP_CONV_TRANSPOSE_1D,
+         GGML_OP_IM2COL,
+@@ -2134,6 +2135,17 @@
+     GGML_API struct ggml_tensor * ggml_rope_set_offset(
+             struct ggml_tensor  * a,
+             int                   n_offs);
++
++    // apply precomputed rotary matrices, with shapes in ne[] order:
++    // a: F32 [head_dim, heads, tokens, batch], pe: F32 [2, 2, head_dim/2, tokens].
++    // pe stores [[cos, -sin], [sin, cos]] for each pair and token, shared across heads/batches.
++    // Returns contiguous F32 [head_dim, tokens, heads*batch]. Input strides are preserved.
++    // Interleaved pairs are (2*i, 2*i+1); otherwise pairs are (i, i+head_dim/2).
++    GGML_API struct ggml_tensor * ggml_rope_apply(
++            struct ggml_context * ctx,
++            struct ggml_tensor  * a,
++            struct ggml_tensor  * pe,
++            bool                  interleaved);
+ 
+     // im2col
+     // converts data into a format that effectively results in a convolution when combined with matrix multiplication
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -1120,6 +1120,7 @@
+     "SOFT_MAX_BACK",
+     "ROPE",
+     "ROPE_BACK",
++    "ROPE_APPLY",
+     "CLAMP",
+     "CONV_TRANSPOSE_1D",
+     "IM2COL",
+@@ -1190,7 +1191,7 @@
+     "GATED_DELTA_NET_BACK",
+ };
+ 
+-static_assert(GGML_OP_COUNT == 110, "GGML_OP_COUNT != 110");
++static_assert(GGML_OP_COUNT == 111, "GGML_OP_COUNT != 111");
+ 
+ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+     "none",
+@@ -1246,6 +1247,7 @@
+     "soft_max_back(x)",
+     "rope(x)",
+     "rope_back(x)",
++    "rope_apply(x,pe)",
+     "clamp(x)",
+     "conv_transpose_1d(x)",
+     "im2col(x)",
+@@ -1316,7 +1318,7 @@
+     "gated_delta_net_back(x)",
+ };
+ 
+-static_assert(GGML_OP_COUNT == 110, "GGML_OP_COUNT != 110");
++static_assert(GGML_OP_COUNT == 111, "GGML_OP_COUNT != 111");
+ 
+ static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
+ 
+@@ -4766,6 +4768,26 @@
+ 
+     ggml_set_op_params_i32(a, 15, n_offs);
+     return a;
++}
++
++// ggml_rope_apply
++
++struct ggml_tensor * ggml_rope_apply(
++        struct ggml_context * ctx,
++        struct ggml_tensor  * a,
++        struct ggml_tensor  * pe,
++        bool                  interleaved) {
++    GGML_ASSERT(a->type == GGML_TYPE_F32 && pe->type == GGML_TYPE_F32);
++    GGML_ASSERT(a->ne[0] % 2 == 0);
++    GGML_ASSERT(pe->ne[0] == 2 && pe->ne[1] == 2);
++    GGML_ASSERT(pe->ne[2] == a->ne[0]/2 && pe->ne[3] == a->ne[2]);
++
++    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, a->type, a->ne[0], a->ne[2], a->ne[1]*a->ne[3]);
++    ggml_set_op_params_i32(result, 0, interleaved ? 1 : 0);
++    result->op     = GGML_OP_ROPE_APPLY;
++    result->src[0] = a;
++    result->src[1] = pe;
++    return result;
+ }
+ 
+ static int64_t ggml_calc_conv_output_size(int64_t ins, int64_t ks, int s, int p, int d) {
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -2037,6 +2037,10 @@
+             {
+                 ggml_compute_forward_rope_back(params, tensor);
+             } break;
++        case GGML_OP_ROPE_APPLY:
++            {
++                ggml_compute_forward_rope_apply(params, tensor);
++            } break;
+         case GGML_OP_CLAMP:
+             {
+                 ggml_compute_forward_clamp(params, tensor);
+@@ -2520,6 +2524,7 @@
+         case GGML_OP_SOFT_MAX_BACK:
+         case GGML_OP_ROPE:
+         case GGML_OP_ROPE_BACK:
++        case GGML_OP_ROPE_APPLY:
+         case GGML_OP_ADD_REL_POS:
+             {
+                 n_tasks = n_threads;
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -489,6 +489,9 @@
+                 src1->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32;
+         case GGML_OP_CONV_2D:
+             return ggml_is_contiguous(op->src[0]);
++        case GGML_OP_ROPE_APPLY:
++            return src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 &&
++                   op->type == GGML_TYPE_F32 && ggml_is_contiguous(op);
+         case GGML_OP_SSM_SCAN:
+             return ggml_get_op_params_i32(op, 0) == 1 || op->src[3]->ne[0] == 1;
+         default:
+diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -6631,6 +6631,48 @@
+                     }
+                 }
+             } //attn-heads
++        }
++    }
++}
++
++// ggml_compute_forward_rope_apply
++
++void ggml_compute_forward_rope_apply(const ggml_compute_params * params, ggml_tensor * dst) {
++    const ggml_tensor * x  = dst->src[0];
++    const ggml_tensor * pe = dst->src[1];
++    GGML_ASSERT(x->type == GGML_TYPE_F32 && pe->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32);
++    GGML_ASSERT(ggml_is_contiguous(dst));
++
++    const bool interleaved = ggml_get_op_params_i32(dst, 0) != 0;
++    const int64_t half_dim = x->ne[0]/2;
++    const int64_t rows = x->ne[1]*x->ne[2]*x->ne[3];
++    const int64_t rows_per_thread = (rows + params->nth - 1)/params->nth;
++    const int64_t begin = rows_per_thread*params->ith;
++    const int64_t end = std::min(begin + rows_per_thread, rows);
++    for (int64_t row = begin; row < end; ++row) {
++        const int64_t token = row % x->ne[2];
++        const int64_t head  = (row / x->ne[2]) % x->ne[1];
++        const int64_t batch = row / (x->ne[2]*x->ne[1]);
++        const char * x_row = (const char *) x->data + head*x->nb[1] + token*x->nb[2] + batch*x->nb[3];
++        const char * pe_row = (const char *) pe->data + token*pe->nb[3];
++        float * out = (float *) dst->data + row*x->ne[0];
++        for (int64_t j = 0; j < half_dim; ++j) {
++            const int64_t i0 = interleaved ? 2*j : j;
++            const int64_t i1 = interleaved ? 2*j + 1 : j + half_dim;
++            const float a = *(const float *) (x_row + i0*x->nb[0]);
++            const float b = *(const float *) (x_row + i1*x->nb[0]);
++            const char * matrix = pe_row + j*pe->nb[2];
++            const float c = *(const float *) matrix;
++            const float s = *(const float *) (matrix + pe->nb[1]);
++            if (interleaved) {
++                const float neg_s = *(const float *) (matrix + pe->nb[0]);
++                const float c1 = *(const float *) (matrix + pe->nb[0] + pe->nb[1]);
++                out[i0] = a*c + b*neg_s;
++                out[i1] = a*s + b*c1;
++            } else {
++                out[i0] = a*c - b*s;
++                out[i1] = a*s + b*c;
++            }
+         }
+     }
+ }
+diff --git a/ggml/src/ggml-cpu/ops.h b/ggml/src/ggml-cpu/ops.h
+--- a/ggml/src/ggml-cpu/ops.h
++++ b/ggml/src/ggml-cpu/ops.h
+@@ -61,6 +61,7 @@
+ void ggml_compute_forward_diag_mask_zero(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_soft_max(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_soft_max_ext_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
++void ggml_compute_forward_rope_apply(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_rope(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_rope_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ void ggml_compute_forward_clamp(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -3536,7 +3536,24 @@
+ 
+     return res;
+ }
++
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope_apply(ggml_metal_library_t lib, const ggml_tensor * op) {
++    assert(op->op == GGML_OP_ROPE_APPLY);
++
++    char base[256];
++    char name[256];
+ 
++    snprintf(base, 256, "kernel_rope_apply_%s", ggml_type_name(op->src[0]->type));
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
++
+ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col(ggml_metal_library_t lib, const ggml_tensor * op) {
+     assert(op->op == GGML_OP_IM2COL);
+ 
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
+--- a/ggml/src/ggml-metal/ggml-metal-device.h
++++ b/ggml/src/ggml-metal/ggml-metal-device.h
+@@ -201,6 +201,7 @@
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_norm              (ggml_metal_library_t lib, const struct ggml_tensor * op, int32_t n_fuse);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_norm_scale        (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope              (ggml_metal_library_t lib, const struct ggml_tensor * op);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope_apply        (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_im2col            (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_transpose_1d (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_transpose_2d (ggml_metal_library_t lib, const struct ggml_tensor * op);
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -2802,6 +2802,10 @@
+         case GGML_OP_ROPE:
+         case GGML_OP_ROPE_BACK:
+             return true;
++        case GGML_OP_ROPE_APPLY:
++            // f32 in, f32 out; the destination is allocated contiguous by ggml_rope_apply
++            return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
++                op->type == GGML_TYPE_F32 && ggml_is_contiguous(op);
+         case GGML_OP_IM2COL:
+             return ggml_is_contiguous(op->src[1]) && op->src[1]->type == GGML_TYPE_F32 && (op->type == GGML_TYPE_F16 || op->type == GGML_TYPE_F32);
+         case GGML_OP_CONV_2D:
+diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
+--- a/ggml/src/ggml-metal/ggml-metal-impl.h
++++ b/ggml/src/ggml-metal/ggml-metal-impl.h
+@@ -391,6 +391,21 @@
+ } ggml_metal_kargs_rope;
+ 
+ typedef struct {
++    int32_t  ne00;        // head_dim
++    int32_t  ne01;        // heads
++    int32_t  ne02;        // tokens
++    uint64_t nb01;        // src0 byte strides: head, token, batch
++    uint64_t nb02;
++    uint64_t nb03;
++    int32_t  half_dim;
++    bool     interleaved;
++    uint64_t pe_nb0;      // pe byte strides: dim0, dim1, pair, token
++    uint64_t pe_nb1;
++    uint64_t pe_nb2;
++    uint64_t pe_nb3;
++} ggml_metal_kargs_rope_apply;
++
++typedef struct {
+     int32_t  ne0;
+     int32_t  ne1;
+     int32_t  ne2;
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+--- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
+@@ -596,6 +596,10 @@
+             {
+                 n_fuse = ggml_metal_op_rope(ctx, idx);
+             } break;
++        case GGML_OP_ROPE_APPLY:
++            {
++                n_fuse = ggml_metal_op_rope_apply(ctx, idx);
++            } break;
+         case GGML_OP_IM2COL:
+             {
+                 n_fuse = ggml_metal_op_im2col(ctx, idx);
+@@ -7243,6 +7247,49 @@
+     return 1;
+ }
+ 
++int ggml_metal_op_rope_apply(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    GGML_TENSOR_LOCALS(int64_t, ne0, op->src[0], ne);
++    GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
++    GGML_TENSOR_LOCALS(uint64_t, nb1, op->src[1], nb);
++
++    auto pipeline = ggml_metal_library_get_pipeline_rope_apply(lib, op);
++
++    ggml_metal_kargs_rope_apply args = {
++        /*.ne00       =*/ (int32_t) ne00,
++        /*.ne01       =*/ (int32_t) ne01,
++        /*.ne02       =*/ (int32_t) ne02,
++        /*.nb01       =*/ nb01,
++        /*.nb02       =*/ nb02,
++        /*.nb03       =*/ nb03,
++        /*.half_dim   =*/ (int32_t) (ne00/2),
++        /*.interleaved=*/ ggml_get_op_params_i32(op, 0) != 0,
++        /*.pe_nb0     =*/ nb10,
++        /*.pe_nb1     =*/ nb11,
++        /*.pe_nb2     =*/ nb12,
++        /*.pe_nb3     =*/ nb13,
++    };
++
++    // one thread per (pair, head, token, batch); the pairs of a head are split over the
++    // threads of a threadgroup, so the grid stays within the limits of the y and z dimensions
++    const int64_t half = std::max<int64_t>(1, ne00/2);
++    const int nth = (int) std::min<int64_t>((int64_t) ggml_metal_pipeline_max_theads_per_threadgroup(pipeline), half);
++
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3);
++
++    ggml_metal_encoder_dispatch_threadgroups(enc, ne01, ne02, ne03, nth, 1, 1);
++
++    return 1;
++}
++
+ int ggml_metal_op_im2col(ggml_metal_op_t ctx, int idx) {
+     ggml_tensor * op = ctx->node(idx);
+ 
+diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
+--- a/ggml/src/ggml-metal/ggml-metal-ops.h
++++ b/ggml/src/ggml-metal/ggml-metal-ops.h
+@@ -98,6 +98,7 @@
+ int ggml_metal_op_group_norm        (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_norm              (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_rope              (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_rope_apply        (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_im2col            (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_conv_2d           (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_conv_2d_dw        (ggml_metal_op_t ctx, int idx);
+diff --git a/ggml/src/ggml-metal/kernels/rope.metal b/ggml/src/ggml-metal/kernels/rope.metal
+--- a/ggml/src/ggml-metal/kernels/rope.metal
++++ b/ggml/src/ggml-metal/kernels/rope.metal
+@@ -314,7 +314,52 @@
+         }
+     }
+ }
++
++// Apply precomputed rotary matrices (ggml_rope_apply): pe carries [[cos, -sin], [sin, cos]]
++// for each pair of the head dimension and each token, shared across heads and batches.
++// The CPU implementation this replaces moved every attention's q and k to the host on each
++// step, which was most of the DiT's time on MOSS-Image and Qwen-Image.
++kernel void kernel_rope_apply_f32(
++        constant ggml_metal_kargs_rope_apply & args,
++        device const char * src0,
++        device const char * src1,
++        device       char * dst,
++        ushort  tiitg[[thread_index_in_threadgroup]],
++        ushort3 tptg [[threads_per_threadgroup]],
++        uint3   tgpig[[threadgroup_position_in_grid]]) {
++    const int head  = tgpig[0];
++    const int token = tgpig[1];
++    const int batch = tgpig[2];
+ 
++    device const char * x_row = src0 + head*args.nb01 + token*args.nb02 + batch*args.nb03;
++
++    // the destination is contiguous: [head_dim, tokens, heads*batch]
++    const uint64_t out_row = ((uint64_t) token + (uint64_t) args.ne02*((uint64_t) head + (uint64_t) args.ne01*batch))*(uint64_t) args.ne00;
++    device float * out = (device float *) dst + out_row;
++
++    for (int j = tiitg; j < args.half_dim; j += tptg.x) {
++        const int i0 = args.interleaved ? 2*j : j;
++        const int i1 = args.interleaved ? 2*j + 1 : j + args.half_dim;
++
++        const float a = *(device const float *) (x_row + i0*4);
++        const float b = *(device const float *) (x_row + i1*4);
++
++        device const char * m = src1 + j*args.pe_nb2 + token*args.pe_nb3;
++
++        const float c = *(device const float *) (m);
++        const float s = *(device const float *) (m + args.pe_nb1);
++        if (args.interleaved) {
++            const float neg_s = *(device const float *) (m + args.pe_nb0);
++            const float c1    = *(device const float *) (m + args.pe_nb0 + args.pe_nb1);
++            out[i0] = a*c + b*neg_s;
++            out[i1] = a*s + b*c1;
++        } else {
++            out[i0] = a*c - b*s;
++            out[i1] = a*s + b*c;
++        }
++    }
++}
++
+ typedef decltype(kernel_rope_norm<float>) kernel_rope_norm_t;
+ typedef decltype(kernel_rope_neox<float>) kernel_rope_neox_t;
+ typedef decltype(kernel_rope_multi<float>) kernel_rope_multi_t;
+diff --git a/ggml/tests/test-backend-ops.cpp b/ggml/tests/test-backend-ops.cpp
+--- a/ggml/tests/test-backend-ops.cpp
++++ b/ggml/tests/test-backend-ops.cpp
+@@ -6404,6 +6404,60 @@
+ 
+     bool grad_precise() override {
+         return true;
++    }
++};
++
++// GGML_OP_ROPE_APPLY
++struct test_rope_apply : public test_case {
++    const std::array<int64_t, 4> ne_x; // [head_dim, heads, tokens, batch]
++    const bool interleaved;
++
++    std::string vars() override {
++        return VARS_TO_STR2(ne_x, interleaved);
++    }
++
++    test_rope_apply(std::array<int64_t, 4> ne_x = {10, 5, 3, 1}, bool interleaved = false)
++        : ne_x(ne_x), interleaved(interleaved) {}
++
++    ggml_tensor * build_graph(ggml_context * ctx) override {
++        ggml_tensor * x = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, ne_x[0], ne_x[1], ne_x[2], ne_x[3]);
++        ggml_set_name(x, "x");
++
++        // the rotary matrices, one per pair of the head dimension and token: [2, 2, head_dim/2, tokens]
++        ggml_tensor * pe = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 2, 2, ne_x[0]/2, ne_x[2]);
++        ggml_set_name(pe, "pe");
++
++        ggml_tensor * out = ggml_rope_apply(ctx, x, pe, interleaved);
++        ggml_set_name(out, "out");
++
++        return out;
++    }
++
++    void initialize_tensors(ggml_context * ctx) override {
++        const int64_t half_dim = ne_x[0]/2;
++        const int64_t tokens   = ne_x[2];
++
++        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
++            if (t->ne[0] == 2 && t->ne[1] == 2) {
++                // the matrices hold [[cos, -sin], [sin, cos]], with the first dimension the fastest
++                std::vector<float> data(4*half_dim*tokens);
++                for (int64_t tok = 0; tok < tokens; tok++) {
++                    for (int64_t j = 0; j < half_dim; j++) {
++                        const float theta = (float) (rand() % 628) / 100.0f;
++                        const float c = cosf(theta);
++                        const float s = sinf(theta);
++                        float * p = &data[4*(tok*half_dim + j)];
++                        p[0] =  c; // (0, 0)
++                        p[1] = -s; // (1, 0)
++                        p[2] =  s; // (0, 1)
++                        p[3] =  c; // (1, 1)
++                    }
++                }
++                ggml_backend_tensor_set(t, data.data(), 0, data.size()*sizeof(float));
++            } else {
++                init_tensor_uniform(t);
++            }
++        }
+     }
+ };
+ 
+@@ -11380,6 +11434,14 @@
+     test_cases.emplace_back(new test_rope(GGML_TYPE_F32, {256, 16, 512, 1},  64, GGML_ROPE_TYPE_IMROPE, 512, 1.0f, 0.0f, 1.0f, false, 0, true)); // qwen3.5 4B
+     test_cases.emplace_back(new test_rope(GGML_TYPE_F32, {256,  8, 512, 1}, 256, GGML_ROPE_TYPE_NEOX,   512, 1.0f, 0.0f, 1.0f, false, 0, true)); // gemma4 E2B sliding
+     test_cases.emplace_back(new test_rope(GGML_TYPE_F32, {512,  8, 512, 1}, 128, GGML_ROPE_TYPE_NEOX,   512, 1.0f, 0.0f, 1.0f, true,  0, true)); // gemma4 E4B global
++
++    // precomputed rotary matrices
++    for (bool interleaved : {false, true}) {
++        test_cases.emplace_back(new test_rope_apply({10,   5,  3, 1}, interleaved));
++        test_cases.emplace_back(new test_rope_apply({64,   8, 16, 2}, interleaved));
++        test_cases.emplace_back(new test_rope_apply({128, 32,  2, 1}, interleaved));
++        test_cases.emplace_back(new test_rope_apply({96,  16, 77, 3}, interleaved));
++    }
+ 
+     for (int v : { 0, 1, 2, 3 }) {
+         for (int dim : { 0, 1, 2, 3, }) {

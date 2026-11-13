@@ -17,6 +17,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Images: the expert GEMM runs on the dense kernel,** and its mxfp4 variant runs on the host, where the Metal compiler fails on the kernel. The wave64 and half variants of it are written for the arguments upstream replaced with its routing map, and are off until they are ported; a diffusion model does not use them, a Mixture-of-Experts text encoder does.
 - **Images: the gated activations run as one fused GLU,** taken from upstream, so the diffusion step spends fewer kernels on the same maths; the same upstream work fixes SDXL models that ship the UNet alone, with the diffusers tensor names.
 - **Images: the engine applies the rotary tables of attention on the GPU,** which used to move every attention's queries and keys to the CPU on each step, and it picks the discrete card over an integrated one when the model fits it by itself; a 1024x1024 MOSS-Image SFT image goes from 4 min 31 s to 4 min 21 s at 20 steps on a Radeon RX 6800 XT.
+- **Images: the Qwen-Image 2.1 attention runs its rotations and its narrower arithmetic in one pass each.** The queries and keys rotate straight from the precomputed cos/sin table in one kernel, the cached prefix joins the new keys in F16, the type flash attention reads anyway, and the q/k/v, output and gate/up projections take their inputs in F16, each rounded once instead of widened to F32 first; `TOSH_QWEN21_ROPE_TABLE_DISABLE`, `TOSH_QWEN21_PREFIX_F16_DISABLE`, `TOSH_QWEN21_QKV_F16_DISABLE`, `TOSH_QWEN21_OUT_F16_DISABLE` and `TOSH_QWEN21_GATEUP_F16_DISABLE` keep each of the old graphs.
 - **The app and the engines ship without debug symbols.** The release builds kept the symbol table, which names every function and the file it came from; the binaries are now stripped, and `STRIP=0` keeps the symbols for a build meant to be debugged.
 
 ### Fixed
@@ -30,6 +31,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Images: a Metal buffer that fails to allocate is reported as out of memory,** instead of being used and crashing the run.
 - **Images: Metal threadgroup memory is padded to the 16-byte alignment the API requires,** so a kernel can no longer be handed a misaligned buffer.
 - **Images: flash attention refuses the asymmetric K/V pairs its kernels do not cover,** instead of returning a wrong result for them.
+- **Images: a bf16 LoRA on Qwen-Image 2.1 runs instead of stopping the generation (#152).** The engine asked for a matrix kernel for bf16 weights against the half-precision inputs Qwen-Image 2.1 uses, which it never built; the kernel is there now, reading the weights as half, exact for the bf16 values in their range.
 
 ## [0.87.34] - 2026-11-11
 

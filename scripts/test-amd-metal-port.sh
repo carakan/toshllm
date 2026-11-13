@@ -62,15 +62,15 @@ fi
 # The worktree is the ggml project itself; the series is written against the engine's
 # root, where the submodule sits in ggml/, so the paths are prefixed on the way in.
 for patch in $SERIES; do
+    # each patch lands on the series before it, the way the build applies them, so a
+    # patch is checked against the accumulated tree and not against the bare commit
     if ! git -C "$WORK/ggml" apply --check -p2 "$ROOT/$patch" 2>/dev/null; then
-        fail "$(basename "$patch") does not apply to $GGML_COMMIT"
+        fail "$(basename "$patch") does not apply after the patches before it"
         git -C "$WORK/ggml" apply --check -p2 "$ROOT/$patch" 2>&1 | head -5
     else
         ok "$(basename "$patch")"
+        git -C "$WORK/ggml" apply -p2 "$ROOT/$patch" 2>/dev/null
     fi
-done
-for patch in $SERIES; do
-    git -C "$WORK/ggml" apply -p2 "$ROOT/$patch" 2>/dev/null
 done
 
 KERNELS="$WORK/ggml/src/ggml-metal/kernels"

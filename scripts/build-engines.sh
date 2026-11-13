@@ -366,6 +366,13 @@ build_image_engine() {
     # Qwen-Image 2.1 runs its fused gate/up projection through one SwiGLU instead of copying
     # both halves out first; TOSH_QWEN21_SWIGLU_DISABLE restores the split graph.
     git apply -p1 "$ROOT/patches/image/0057-image-qwen21-fused-swiglu.patch"
+    # Qwen-Image 2.1 rotates q and k straight from the precomputed table in one pass instead
+    # of the generic permute/repeat/multiply/add chain; TOSH_QWEN21_ROPE_TABLE_DISABLE keeps
+    # the old graph. The op it needs is patches/image-metal/0012.
+    git apply -p1 "$ROOT/patches/image/0059-image-qwen21-rope-table.patch"
+    # The cached prefix and the new keys meet in F16, the type flash attention reads; the q/k/v,
+    # output and gate/up projections take F16 inputs too, each rounded once instead of widened.
+    git apply -p1 "$ROOT/patches/image/0060-image-qwen21-f16-inputs.patch"
     # The down projection takes its input in F16, which its tile loader rounds to anyway.
     git apply -p1 "$ROOT/patches/image/0061-image-qwen21-down-f16.patch"
 

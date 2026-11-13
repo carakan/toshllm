@@ -53,6 +53,9 @@ take upstream master whole.
 | `0001-ggml-types-and-ops.patch` | the ggml-level types and ops the backend needs: the TurboQuant and Prism ternary types, the Dynamic MoE ops, and the scheduler and CPU sides that go with them |
 | `0002-amd-metal-kernels.patch` | the Metal shaders, including the wave64 variants of the matvec, the matmul and the flash attention |
 | `0003-amd-metal-host.patch` | the Metal host side: the device's wave64 support, the manual (ToshGEMM) matmul path, the pipeline dispatch |
+| `0004-image-ggml-rope-apply.patch` | `ggml_rope_apply` (`GGML_OP_ROPE_APPLY`): applying a rotation the engine prepared earlier, with its CPU forward and dispatch |
+| `0012-image-qwen21-rope-table.patch` | the Qwen-Image 2.1 rope from the precomputed table: `ggml_rope_table` as a mode of `GGML_OP_ROPE`, its CPU forward and its Metal kernel, so the rotation is one pass over the table instead of the generic permute/repeat/multiply/add chain |
+| `0013-image-qwen21-bf16-f16-mul-mm.patch` | the `bf16` weights against `f16` inputs matmul kernel, which a runtime bf16 LoRA on Qwen-Image 2.1 asks for: read as half, exact for bf16 values in their range |
 
 The series is a merge of the ported `llama/metal/` series with upstream's newer ggml, so it is
 one patch per area rather than one per feature. `scripts/test-amd-metal-port.sh` checks it:
