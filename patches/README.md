@@ -46,6 +46,21 @@ because its decode block does not match at wider context. The build script asser
 are expected to reject and stops instead of shipping a backend missing one. Do not remove that
 check.
 
+## Flash attention on AMD
+
+Upstream's Metal flash-attention support check ends in `return has_simdgroup_mm`, asking for
+Apple's simdgroup matrix instructions. A Radeon never reports those (it reports Metal3, which
+only `has_simdgroup_reduction` picks up), so flash attention is disabled on AMD and every
+attention falls back to the full score matrix. That is the current, correct behaviour.
+
+Turning the gate on is not just a switch. `shared-metal/0001-6` adds AMD-adapted flash kernels
+(`kernel_flash_attn_ext_*_amd`), but they are dropped: `image/0002` does not reapply those
+hunks and the host dispatch never selects the `_amd` names. What the dispatch does select is
+the stock `kernel_flash_attn_ext_vec`, which on a Radeon is wrong — `test-backend-ops` reports
+`inf` for `hsk=64` and a precision loss for `hsk=512`, the head sizes the diffusion models use.
+So the AMD flash path needs the `_amd` kernels wired into the dispatch and validated before the
+gate can be opened; a bare gate flip routes image generation to a kernel that returns `inf`.
+
 ## The image engine's upstream commits
 
 The image engine is not one upstream commit but a base plus a list of commits cherry-picked onto

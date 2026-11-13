@@ -454,6 +454,18 @@ build_image_engine() {
     # the width the model reads a tensor as. Upstream added it with the packed INT4 convrot,
     # that this engine does not have, so the accessor is backported on its own.
     git apply -p1 "$ROOT/patches/image/0071-image-tensor-storage-logical-ne0.patch"
+    # Two fixes backported from upstream ggml that this engine can take without the newer
+    # ggml they landed on: NORM and RMS_NORM clamped the threadgroup count to the row
+    # length and so left the last, partial simdgroup of a row uncounted, and a failed
+    # buffer allocation dereferenced a null buffer instead of reporting the OOM.
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0072-image-metal-norm-partial-simd.patch"
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0073-image-metal-alloc-null-check.patch"
+    # Two more backports from upstream ggml: the flash-attention support check now refuses
+    # the asymmetric K/V pairs its kernels do not instantiate, and threadgroup memory is
+    # padded to the 16-byte alignment Metal requires, so a misaligned buffer can no longer
+    # be handed to a kernel.
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0074-image-metal-fa-kv-guards.patch"
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0075-image-metal-smem-align.patch"
     echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
     # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
