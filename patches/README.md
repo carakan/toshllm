@@ -4,7 +4,8 @@ Patches against the pinned upstream commits, one directory per engine:
 
 ```
 llama/          llama.cpp, one patch per feature in a folder per area
-shared-metal/   the Metal backend for whisper.cpp and stable-diffusion.cpp
+image-metal/    the AMD Metal backend for stable-diffusion.cpp, on upstream ggml's kernels/ layout
+shared-metal/   the Metal backend for whisper.cpp, on the older single-file ggml layout
 whisper/        whisper.cpp, outside the Metal backend
 image/          stable-diffusion.cpp, outside the Metal backend
 ```
@@ -35,16 +36,38 @@ the feature patch it belongs to.
 
 ## `shared-metal/`
 
-Whisper and stable-diffusion.cpp are pinned to commits from before upstream split
-`ggml-metal.metal` into `kernels/`, so they cannot take `llama/0001` and `llama/0002`. The
-`0001-*` series here is that same backend against the older layout, and both engines apply it
-unchanged.
+Whisper.cpp is pinned to a commit from before upstream split `ggml-metal.metal` into `kernels/`,
+so it cannot take `llama/metal/`. The `0001-*` series here is that same backend against the
+older layout, and the speech engine applies it unchanged. The image engine moved to the newer
+layout and takes `image-metal/` instead.
 
-The image engine's ggml is older still and exactly four hunks cannot land on it. They are
-applied from `patches/image/0002` in their adapted form, and `ggml-metal-impl.h` needs `-C2`
-because its decode block does not match at wider context. The build script asserts which hunks
-are expected to reject and stops instead of shipping a backend missing one. Do not remove that
-check.
+## `image-metal/`
+
+The AMD Metal backend for the image engine, on the ggml that upstream stable-diffusion.cpp
+master pins (`d803c238`). Upstream split `ggml-metal.metal` into `kernels/` and added the
+ggml-ext registry, so the backend had to be ported onto that layout before the engine could
+take upstream master whole.
+
+| patch | what it carries |
+|---|---|
+| `0001-ggml-types-and-ops.patch` | the ggml-level types and ops the backend needs: the TurboQuant and Prism ternary types, the Dynamic MoE ops, and the scheduler and CPU sides that go with them |
+| `0002-amd-metal-kernels.patch` | the Metal shaders, including the wave64 variants of the matvec, the matmul and the flash attention |
+| `0003-amd-metal-host.patch` | the Metal host side: the device's wave64 support, the manual (ToshGEMM) matmul path, the pipeline dispatch |
+
+The series is a merge of the ported `llama/metal/` series with upstream's newer ggml, so it is
+one patch per area rather than one per feature. `scripts/test-amd-metal-port.sh` checks it:
+that the series applies to the pinned commit, that no two Metal function constants claim the
+same index, that the wave64 kernels are there, that the ggml-level API the Metal side calls is
+declared, and that the op tables match the op enum. With `--build` it also builds the ported
+ggml and runs the backend op tests on the Metal device.
+
+Two things upstream's newer ggml changed under the backend:
+
+- The `mul_mat_id` arguments were replaced by a routing map, so the expert GEMM's wave64 and
+  half variants are written for arguments that no longer exist. They are off; the dense kernel
+  runs the expert GEMM. A diffusion model does not use it, a Mixture-of-Experts text encoder
+  does.
+- The Metal compiler fails on the mxfp4 expert GEMM, so those weights are computed on the host.
 
 ## Flash attention on AMD
 
@@ -53,30 +76,26 @@ Apple's simdgroup matrix instructions. A Radeon never reports those (it reports 
 only `has_simdgroup_reduction` picks up), so flash attention is disabled on AMD and every
 attention falls back to the full score matrix. That is the current, correct behaviour.
 
-Turning the gate on is not just a switch. `shared-metal/0001-6` adds AMD-adapted flash kernels
-(`kernel_flash_attn_ext_*_amd`), but they are dropped: `image/0002` does not reapply those
-hunks and the host dispatch never selects the `_amd` names. What the dispatch does select is
-the stock `kernel_flash_attn_ext_vec`, which on a Radeon is wrong — `test-backend-ops` reports
-`inf` for `hsk=64` and a precision loss for `hsk=512`, the head sizes the diffusion models use.
-So the AMD flash path needs the `_amd` kernels wired into the dispatch and validated before the
-gate can be opened; a bare gate flip routes image generation to a kernel that returns `inf`.
+Turning the gate on is not just a switch. The backend carries AMD-adapted flash kernels
+(`kernel_flash_attn_ext_*_amd`), but the host dispatch never selects the `_amd` names. What the
+dispatch does select is the stock `kernel_flash_attn_ext_vec`, which on a Radeon is wrong —
+`test-backend-ops` reports `inf` for `hsk=64` and a precision loss for `hsk=512`, the head sizes
+the diffusion models use. So the AMD flash path needs the `_amd` kernels wired into the dispatch
+and validated before the gate can be opened; a bare gate flip routes image generation to a
+kernel that returns `inf`.
 
 ## The image engine's upstream commits
 
-The image engine is not one upstream commit but a base plus a list of commits cherry-picked onto
-it, both named in `scripts/build-engines.sh` as `SD_COMMIT` and `SD_CHERRY_PICKS`. The base is
-`e7b7ec6`; the list holds the upstream work this engine needs and upstream master's own
-intervening commits do not, because those ask for ggml APIs this ggml does not have.
+The image engine takes upstream stable-diffusion.cpp master whole, named in
+`scripts/build-engines.sh` as `SD_COMMIT`. It used to be a base plus a list of commits
+cherry-picked onto it (`SD_CHERRY_PICKS`), because the ggml it was pinned to predated the
+ggml-ext registry, the runner's chunk helper and the compute callback that upstream master's own
+commits ask for. The ggml moved to the commit that has them, so the list is empty and the
+engine follows upstream: FLUX.3, Chroma, MiniMax-H3-Image and the rest arrive with the next
+upstream pull instead of one commit at a time.
 
-The list is applied in order and committed as one, so the tree is reproducible from upstream
-alone: no local commit has to be pushed anywhere for a fresh clone or a CI run to build the
-engine. To move the engine, add the upstream commit to the list rather than to a local branch.
-
-The list stops where the ggml does not. Upstream moved the model-specific operators into the
-ggml-ext registry (45a63ac), replaced the QKV split helpers with the runner's chunk helper
-(56070ea) and unified the runner's execution (ddc367a); those ask for ggml APIs that arrived
-with the `kernels/` split this engine's ggml predates. The commits between them that do not
-need those APIs are in the list, so the engine takes the upstream work it can build on.
+To move the engine, move `SD_COMMIT` and `GGML_COMMIT` together and port what the new ggml
+broke; the checks in `scripts/test-amd-metal-port.sh` say what broke.
 
 
 ## Changing one

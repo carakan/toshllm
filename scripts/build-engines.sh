@@ -28,34 +28,16 @@ strip_binaries() {
 
 LLAMA_COMMIT="${LLAMA_COMMIT:-d81235049384534c167caea52b85a694f6103d14}"   # llama.cpp commit validated against the patches
 WHISPER_COMMIT="${WHISPER_COMMIT:-371b5a7561823ab2bb32142d2751e35e7534727b}" # whisper.cpp v1.9.3
-# stable-diffusion.cpp: upstream e7b7ec6 with commits cherry-picked on top, because the
-# commits between them and master ask for a ggml API this ggml does not have
-# (ggml_backend_sched_set_compute_callback, the ggml-ext registry, GGML_GLU_OP_SITU).
-# The list is applied in order by build_image_engine, so the tree is reproducible from
-# upstream alone: e239e4b (the native ggml GLU), 133087d (auto-fit prefers a discrete GPU
-# over an integrated one), 250ea6e (the CUDA layer split), b4d6b83 (integer LoRA scalars
-# convert to FP32), 6225bf8 (MOSS reads the qkv slices as views) and d135894 (the
-# MiniMax-H3 latent hires pass).
-# Then the commits after d135894 that still build on this ggml: fdfc913 (ControlNet Union
-# for SDXL), 7bcd4ce (the LoRA multiplier and the prompt spacing in the metadata),
-# b43af40 (the Flux scheduler counts the patch tokens), b43ce4b (the Krea2 text-fusion
-# names survive a Kohya LoRA), fc350be (the server reports the generation stages),
-# f977add (Metal does not use batch_cfg), d22dcda (the device type is cached),
-# cfdf3cf (the LoRAs merge in F32), 008b9a2 (the MiniMax-H3 token_refiner weights),
-# 991f825 (the MSVC parallelism), fbb381d/c44cbec/d36f72b (the README),
-# 46da352 (the layer split follows the device capacity), 73fef08 (the server web UI)
-# and a3f46b6 (the server queue limits are configurable).
-# The commits between them and upstream master that are left out ask for the ggml-ext
-# registry (45a63ac), the ggml chunk helper of the runner refactor (56070ea) or the
-# ggml compute callback (ddc367a), all of which need the newer ggml below.
-SD_COMMIT="${SD_COMMIT:-e7b7ec6}"                                   # stable-diffusion.cpp base commit
-SD_CHERRY_PICKS="${SD_CHERRY_PICKS:-e239e4b 133087d 250ea6e b4d6b83 6225bf8 d135894 fdfc913 7bcd4ce b43af40 b43ce4b fc350be f977add d22dcda cfdf3cf 008b9a2 991f825 fbb381d c44cbec 46da352 d36f72b 73fef08 a3f46b6}"
-# The image engine stays on the ggml commit its Metal patches were written against: upstream
-# split ggml-metal.metal into kernels/ and moved the flash-attention kernels into per-type
-# files, so the AMD backend would have to be rewritten for it. The sd.cpp code above moves
-# forward independently, and the few ggml APIs it needs that are newer than this commit
-# (ggml_prec_set_acc) are backported by patches/image/0068.
-GGML_COMMIT="${GGML_COMMIT:-4bf5f6000653b7881d00963cd6ddb665ccd62a8d}"
+# stable-diffusion.cpp: upstream master, taken whole. The commits this engine used to
+# cherry-pick onto an older base are all in master now, and the ones that were left out
+# (the ggml-ext registry, the ggml chunk helper of the runner refactor, the ggml compute
+# callback) come with the newer ggml below.
+SD_COMMIT="${SD_COMMIT:-b9d7176bf88fe465576e0aafbe47ba253ffcfc2c}"   # stable-diffusion.cpp master
+SD_CHERRY_PICKS="${SD_CHERRY_PICKS:-}"
+# ggml: upstream split ggml-metal.metal into kernels/ and added the ggml-ext registry that
+# stable-diffusion.cpp master registers its custom kernels with. The AMD Metal backend is
+# ported onto that layout in patches/image-metal.
+GGML_COMMIT="${GGML_COMMIT:-d803c238f67915fb825a9aa4df27b99356d51597}"
 ARCH="${ARCH:-$(uname -m)}"
 DEPLOYMENT_TARGET="14.0"        # same floor as the app (Package.swift)
 if [ "$ARCH" = "universal" ]; then
@@ -325,6 +307,9 @@ build_image_engine() {
     # the previous build left the patches in both working trees; a bump that moves the
     # submodule cannot check the new commit out over them, so revert before switching
     git -C ggml checkout -- . 2>/dev/null || true
+    # the Metal port adds kernel files; they are untracked, so the checkout above leaves
+    # them behind and the next apply fails
+    git -C ggml clean -qfd 2>/dev/null || true
     git checkout -- . 2>/dev/null || true
     git checkout -qf "$SD_COMMIT"
     # The upstream commits this engine needs are cherry-picked on top of the base, so the tree
@@ -350,47 +335,19 @@ build_image_engine() {
     git checkout -- . 2>/dev/null || true
     git -C ggml checkout -- . 2>/dev/null || true
 
-    # impl.h needs -C2: this engine's decode N_R0/N_SG block differs from llama.cpp's, so a -U5
-    # hunk finds no match. Safe only because every define it edits is unique, asserted below.
-    # The 0001-* series in patches/shared-metal is the Metal backend for the engines pinned
-    # before upstream split ggml-metal.metal into kernels/, and is applied here **unchanged**.
-    # This ggml is older still, and exactly four hunks cannot land on it; they are applied from
-    # patches/image/0002 in their adapted form.
-    # If that set ever changes, the build stops instead of shipping a backend missing a hunk.
-    local expected_rejects="ggml-metal-device.cpp.rej ggml-metal-device.m.rej ggml-metal.cpp.rej ggml-metal.metal.rej"
-    for shared in "$ROOT"/patches/shared-metal/0001-*.patch; do
-        git apply --reject --exclude='ggml/src/ggml-metal/ggml-metal-impl.h' \
-                  --include='ggml/src/ggml-metal/*' -p1 "$shared" >/dev/null 2>&1 || true
+    # The AMD Metal backend, ported onto upstream's kernels/ layout: the ggml-level types
+    # and ops it needs, the Metal kernels, and the Metal host side.
+    for patch in "$ROOT"/patches/image-metal/*.patch; do
+        [ -f "$patch" ] || continue
+        git apply -p1 "$patch"
+        echo "applied ${patch#$ROOT/patches/}"
     done
-    local got_rejects
-    got_rejects=$(find ggml/src/ggml-metal -name '*.rej' -exec basename {} \; | sort -u | tr '\n' ' ')
-    got_rejects="${got_rejects% }"
-    if [ "$got_rejects" != "$expected_rejects" ]; then
-        echo "ERROR: the shared Metal series no longer diverges where patches/image/0002 expects." >&2
-        echo "  expected rejects: $expected_rejects" >&2
-        echo "  got:              $got_rejects" >&2
-        echo "  inspect the .rej files, then update patches/image/0002-image-metal-divergent-hunks.patch" >&2
-        exit 1
-    fi
-    find ggml/src/ggml-metal \( -name '*.rej' -o -name '*.orig' \) -delete
-    git apply --include='ggml/src/ggml-metal/*' -p1 \
-              "$ROOT/patches/image/0002-image-metal-divergent-hunks.patch"
-    git apply --include='ggml/src/ggml-metal/ggml-metal-impl.h' -C2 -p1 \
-              "$ROOT/patches/shared-metal/0001-7-metal-backend-host.patch"
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0003-image-metal-ncb.patch"
-    # sd.cpp core (outside the ggml submodule): the per-op CPU fallback for wave64 is gone.
-    # It hooked into ComputeWorkspace::needs_scheduler(), which upstream deleted: the scheduler
-    # path is now unconditional, so there is no condition left to force.
-    git apply -p1 "$ROOT/patches/image/0008-image-ext-wave64.patch"
-    # after 0008: both edit ggml-metal.metal and ggml-metal-ops.cpp, and 0021 was
-    # generated on top of it. Without a Metal im2col_3d, ggml_conv_3d falls back to
-    # the direct 3D convolution, slow enough that the Wan VAE trips the watchdog.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0021-image-metal-im2col-3d.patch"
-    # UNet head sizes for the AMD flash-attention kernels: SD 1.5 builds a 2.7 GB score
-    # matrix at 768 and does not fit at all at 1024 without them. Image-side copy because
-    # this engine's .metal spells the wave64 instantiation macro differently.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0047-image-fa-unet-heads.patch"
-    # Release diffusion weights before video decoding.
+    # Two fixes upstream ggml has not taken yet, and they still apply on the new base:
+    # a failed buffer allocation dereferenced a null buffer instead of reporting the OOM,
+    # and flash attention accepted the asymmetric K/V pairs its kernels do not cover.
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0073-image-metal-alloc-null-check.patch"
+    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0074-image-metal-fa-kv-guards.patch"
+    # sd.cpp core (outside the ggml submodule).
     git apply -p1 "$ROOT/patches/image/0049-image-free-diffusion-before-video-decode.patch"
     # Yield between VAE tiles to keep the desktop responsive.
     git apply -p1 "$ROOT/patches/image/0050-image-vae-tile-yield.patch"
@@ -404,81 +361,24 @@ build_image_engine() {
     # Cast an f16 weight to f32 before adding a LoRA diff: the diff is f32, Metal wants both
     # operands in one type, and a weight in private VRAM cannot fall back to the CPU for the add.
     git apply -p1 "$ROOT/patches/image/0053-image-lora-f16-weight-cast.patch"
-    # Report free VRAM from what this backend holds: the AMD driver's own figure counts
-    # buffers it has not reclaimed yet, and the engine then refuses work that fits.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0055-image-metal-live-vram-report.patch"
-    # Half partials as an opt-in: float stays the default because some models overflow half,
-    # and the app sets TOSH_MM_ACC_HALF only for the models checked with it.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0056-image-metal-half-partials.patch"
     # Qwen-Image 2.1 runs its fused gate/up projection through one SwiGLU instead of copying
     # both halves out first; TOSH_QWEN21_SWIGLU_DISABLE restores the split graph.
     git apply -p1 "$ROOT/patches/image/0057-image-qwen21-fused-swiglu.patch"
-    # A fully contiguous copy runs as one flat range instead of rebuilding a 4-D index per
-    # element; same port as the speech engine's 0028.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0058-image-metal-cpy-contiguous.patch"
-    # Qwen-Image 2.1 rotates q and k straight from its cos/sin table in one kernel, with a CPU
-    # twin for the fallback; TOSH_QWEN21_ROPE_TABLE_DISABLE restores the generic graph.
-    git apply -p1 "$ROOT/patches/image/0059-image-qwen21-rope-table.patch"
-    # The cached prefix and the new keys meet in F16, the type flash attention reads.
-    git apply -p1 "$ROOT/patches/image/0060-image-qwen21-prefix-f16.patch"
     # The down projection takes its input in F16, which its tile loader rounds to anyway.
     git apply -p1 "$ROOT/patches/image/0061-image-qwen21-down-f16.patch"
-    # The q/k/v, output and gate/up projections take F16 inputs too, and the modulation skips
-    # a whole-tensor slice copy when there is no cached prefix.
-    git apply -p1 "$ROOT/patches/image/0062-image-qwen21-f16-inputs.patch"
-    # Flash attention reads Qwen-Image 2.1's F16 values through a permuted view instead of a copy.
-    git apply -p1 "$ROOT/patches/image/0063-image-qwen21-v-view.patch"
-    # 2D im2col runs one threadgroup per output pixel, like im2col_3d, instead of a few threads
-    # per channel, and 3x3 kernels stage their input rows to write each pixel in wide stores;
-    # TOSH_IM2COL_PX_DISABLE and TOSH_IM2COL_TILE_DISABLE restore the older dispatches.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0064-image-metal-im2col.patch"
-    # A copy that swaps two contiguous blocks of dims (the Wan VAE's channel-first norm) goes
-    # through 32x32 tiles; TOSH_CPY_TRANSPOSE_DISABLE restores the generic copy.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0065-image-metal-cpy-transpose.patch"
-    # Diffusion attention (f16 K/V, no mask) runs a prefill kernel without the mask paths;
-    # TOSH_FA_NOMASK_DISABLE restores pf_amd.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0066-image-metal-fa-nomask.patch"
-    # Large matrix products walk their tiles in bands of src1 that stay in the cache;
-    # TOSH_MM_BAND_MB=0 restores the plain order.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0067-image-metal-mm-band.patch"
-    # ggml_prec_set_acc: the sd.cpp code of the newer upstream asks for an accumulator
-    # precision, and this ggml only has the two per-op setters it replaces.
-    git apply --include='ggml/include/ggml.h' --include='ggml/src/ggml.c' -p1 "$ROOT/patches/image/0068-image-ggml-prec-set-acc.patch"
-    # ggml_rope_apply: the newer sd.cpp code applies precomputed rotary matrices with it. The
-    # op does not exist in this ggml, so the CPU implementation is backported by 0069 and the
-    # Metal kernel is added by 0070: without it the scheduler moves every attention's q and k
-    # to the host on each step, which was most of the DiT's time on MOSS-Image.
-    git apply --include='ggml/include/ggml.h' --include='ggml/src/ggml.c' --include='ggml/src/ggml-cpu/*' -p1 "$ROOT/patches/image/0069-image-ggml-rope-apply.patch"
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0070-image-metal-rope-apply.patch"
-    # TensorStorage::logical_ne0: the ControlNet Union code of the newer upstream asks for
-    # the width the model reads a tensor as. Upstream added it with the packed INT4 convrot,
-    # that this engine does not have, so the accessor is backported on its own.
-    git apply -p1 "$ROOT/patches/image/0071-image-tensor-storage-logical-ne0.patch"
-    # Two fixes backported from upstream ggml that this engine can take without the newer
-    # ggml they landed on: NORM and RMS_NORM clamped the threadgroup count to the row
-    # length and so left the last, partial simdgroup of a row uncounted, and a failed
-    # buffer allocation dereferenced a null buffer instead of reporting the OOM.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0072-image-metal-norm-partial-simd.patch"
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0073-image-metal-alloc-null-check.patch"
-    # Two more backports from upstream ggml: the flash-attention support check now refuses
-    # the asymmetric K/V pairs its kernels do not instantiate, and threadgroup memory is
-    # padded to the 16-byte alignment Metal requires, so a misaligned buffer can no longer
-    # be handed to a kernel.
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0074-image-metal-fa-kv-guards.patch"
-    git apply --include='ggml/src/ggml-metal/*' -p1 "$ROOT/patches/image/0075-image-metal-smem-align.patch"
-    echo "applied ggml-metal hunks of 0001 + 0003 + core fallback 0004 + ext wave64 0008 to stable-diffusion.cpp"
 
-    # This ggml is on a different commit, so an ambiguous hunk can land on the wrong
-    # function and still exit 0. Patch context is -U5 to avoid it; assert it anyway.
-    local metal="ggml/src/ggml-metal/ggml-metal.metal"
-    if ! awk '/^kernel void kernel_cumsum_blk\(/,/\{$/' "$metal" | grep -q 'sgptg\[\[threads_per_simdgroup\]\]'; then
-        echo "ERROR: patch 0001 landed wrong in $metal (kernel_cumsum_blk lost its sgptg parameter)" >&2
-        exit 1
-    fi
-    # the reduced-context pass above must still land the fields the AMD kernels read
-    local impl="ggml/src/ggml-metal/ggml-metal-impl.h"
-    if ! awk '/ggml_metal_kargs_flash_attn_ext_vec;/{exit} {print}' "$impl" | grep -q 'int32_t  has_mask;'; then
-        echo "ERROR: patch 0001 landed wrong in $impl (flash_attn_ext_vec lost has_mask)" >&2
+    # The Metal port is a merged series, so a hunk can land on the wrong function and still
+    # exit 0. Assert the markers that show the port took.
+    local kernels="ggml/src/ggml-metal/kernels"
+    for kernel in mul_mm_w64.metal mul_mv_w64.metal fa_w64.metal; do
+        if [ ! -f "$kernels/$kernel" ]; then
+            echo "ERROR: the AMD Metal port did not land: $kernels/$kernel is missing" >&2
+            exit 1
+        fi
+    done
+    # the routing map's expert count moved past the AMD function constants
+    if ! grep -q "FC_mul_mm_id_map0_ne02 \[\[function_constant(FC_MUL_MM + 14)\]\]" "$kernels/mul_mm.metal"; then
+        echo "ERROR: the AMD Metal port did not land: the mul_mm function constants moved" >&2
         exit 1
     fi
 

@@ -7,15 +7,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Images: MiniMax-H3-Image.** The image model beside MiniMax-H3, in the GGUF quantizations Q2_K to Q5_K_M; it generates and edits from text and reference images, and brings the P-H3-Image text connector with the six-step PDD output heads. It arrives with the upstream engine rather than as a patch of its own.
 - **Images: MOSS-Image SFT.** A 5B model that follows prompts and edits from reference images, with the FLUX.2 VAE and a Qwen3.5 9B text encoder. On a Radeon RX 6800 XT a 1024x1024 image takes about 4 min 30 s at 20 steps.
 
 ### Changed
 
-- **Images: the image engine's stable-diffusion.cpp half moves to upstream master,** which also brings FLUX.3 and Chroma; its Metal backend stays on the ggml commit the AMD patches were written against.
+- **Images: the image engine takes upstream stable-diffusion.cpp and upstream ggml whole,** and the Metal backend is ported onto the layout upstream ggml adopted: the shaders live in the per-kernel files upstream split them into, and the engine registers its own kernels with the ggml-ext registry upstream added. The list of cherry-picked upstream commits and the backports they needed are gone, so the engine follows upstream instead of running behind it, and FLUX.3, Chroma, MiniMax-H3-Image and the rest of the upstream work land with the next upstream pull rather than one commit at a time.
+- **Images: the models that need the newer ggml come with it,** MiniMax-H3-Image among them; the patch that carried it onto the older engine is dropped, because upstream master has it.
+- **Images: the expert GEMM runs on the dense kernel,** and its mxfp4 variant runs on the host, where the Metal compiler fails on the kernel. The wave64 and half variants of it are written for the arguments upstream replaced with its routing map, and are off until they are ported; a diffusion model does not use them, a Mixture-of-Experts text encoder does.
 - **Images: the gated activations run as one fused GLU,** taken from upstream, so the diffusion step spends fewer kernels on the same maths; the same upstream work fixes SDXL models that ship the UNet alone, with the diffusers tensor names.
 - **Images: the engine applies the rotary tables of attention on the GPU,** which used to move every attention's queries and keys to the CPU on each step, and it picks the discrete card over an integrated one when the model fits it by itself; a 1024x1024 MOSS-Image SFT image goes from 4 min 31 s to 4 min 21 s at 20 steps on a Radeon RX 6800 XT.
-- **Images: the image engine takes four more upstream commits,** for the CUDA layer split, the integer LoRA scalars, the MOSS qkv views and the MiniMax-H3 latent hires; they are cherry-picked onto the base commit, so the engine is built from upstream alone.
-- **Images: the image engine takes sixteen more upstream commits,** for the ControlNet Union on SDXL, the Flux scheduler's patch tokens, the Krea2 text-fusion names in a Kohya LoRA, the Metal batch_cfg, the device type cache, the LoRAs that merge in F32, the MiniMax-H3 token_refiner weights, the layer split that follows the device capacity, and the server's generation stages and queue limits; they are cherry-picked onto the base commit as well.
 - **The app and the engines ship without debug symbols.** The release builds kept the symbol table, which names every function and the file it came from; the binaries are now stripped, and `STRIP=0` keeps the symbols for a build meant to be debugged.
 
 ### Fixed
