@@ -25,6 +25,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Images: a Kohya LoRA keeps the Krea2 text-fusion names,** which the conversion used to drop.
 - **Images: the LoRAs merge in F32** when the conversion changes the tensor type, instead of merging in the narrower type.
 - **Images: the MiniMax-H3 Diffusers LoRA applies the token_refiner weights,** which the load used to skip.
+- **Images: a norm over a row whose tail is not a whole group of threads counts that tail,** instead of leaving it out of the mean and variance.
+- **Images: a Metal buffer that fails to allocate is reported as out of memory,** instead of being used and crashing the run.
+- **Images: Metal threadgroup memory is padded to the 16-byte alignment the API requires,** so a kernel can no longer be handed a misaligned buffer.
+- **Images: flash attention refuses the asymmetric K/V pairs its kernels do not cover,** instead of returning a wrong result for them.
 
 ## [0.87.34] - 2026-11-11
 

@@ -864,7 +864,7 @@ final class ImageGenerator: ObservableObject {
             // table: 2379 to 690 MB at 1024x1024 on Z-Image and 8243 to 966 at
             // 1600x900, which is what used to run past the largest block the card
             // allows. Also 12 to 14% quicker, same image (45.8 to 50.6 dB).
-            "--diffusion-fa",
+            "--flash-attn", "off,diffusion=on",
             // The text encoder runs once and then sits in VRAM for the whole
             // sampling: measured 1.56 GB freed on SDXL for 0.4 s of encode.
             "--params-backend", "te=cpu",

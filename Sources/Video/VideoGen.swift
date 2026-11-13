@@ -365,7 +365,7 @@ final class VideoGenerator: ObservableObject {
             "--fps", String(fps),
             "--seed", String(seed),
             // measured 6% faster sampling on RDNA2 with byte-identical output
-            "--diffusion-fa",
+            "--flash-attn", "off,diffusion=on",
             // umt5 is 6.66 GB and does nothing after the first 20 s; in RAM it costs
             // 12 s of encode once and frees the VRAM that caps resolution
             "--params-backend", "te=cpu",
