@@ -314,7 +314,9 @@ build_image_engine() {
     git checkout -qf "$SD_COMMIT"
     # The upstream commits this engine needs are cherry-picked on top of the base, so the tree
     # comes from upstream alone and no local commit has to be pushed anywhere. Each one is
-    # checked out as a commit of its own, then the whole set is committed together.
+    # checked out as a commit of its own, then the whole set is committed together. The list is
+    # empty now that the engine takes upstream master whole; the mechanism stays for the next
+    # upstream bump that cannot.
     for pick in ${=SD_CHERRY_PICKS}; do
         if ! git cherry-pick -n "$pick"; then
             echo "ERROR: cannot cherry-pick $pick onto $SD_COMMIT" >&2
@@ -328,8 +330,8 @@ build_image_engine() {
     git submodule sync --recursive
     retry_git env GIT_HTTP_LOW_SPEED_LIMIT=2000 GIT_HTTP_LOW_SPEED_TIME=30 \
         git submodule update --init --recursive
-    # The image engine keeps the ggml commit its patches target; the newer one upstream
-    # points at split the Metal backend into kernels/ that the AMD backend does not match.
+    # The image engine takes the ggml commit its Metal port targets; upstream master pins the
+    # same one, and the two are kept together so the port and the engine code agree.
     retry_git git -C ggml fetch -q origin "$GGML_COMMIT" 2>/dev/null || true
     git -C ggml checkout -qf "$GGML_COMMIT"
     git checkout -- . 2>/dev/null || true

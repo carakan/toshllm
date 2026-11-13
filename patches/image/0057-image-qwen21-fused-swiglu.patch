@@ -1,9 +1,8 @@
 diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_image_2_1.hpp
+index 00b88f4..3c05488 100644
 --- a/src/model/diffusion/qwen_image_2_1.hpp
 +++ b/src/model/diffusion/qwen_image_2_1.hpp
-@@ -291,9 +291,16 @@
-             h                           = std::dynamic_pointer_cast<LayerNorm>(blocks["img_norm2"])->forward(ctx, x);
-             h                           = modulate(ctx, h, modulation[2], prefix_length);
+@@ -291,5 +291,12 @@ namespace Qwen {
              auto fused                  = blocks.find("img_mlp.gate_up");
 -            if (fused != blocks.end()) {
 +            static const bool swiglu_off = getenv("TOSH_QWEN21_SWIGLU_DISABLE") != nullptr;
@@ -14,8 +13,15 @@ diff --git a/src/model/diffusion/qwen_image_2_1.hpp b/src/model/diffusion/qwen_i
 +            } else if (fused != blocks.end()) {
 +                // the fused projection without the fused activation: split both halves out again
 +                auto gate_up = std::dynamic_pointer_cast<Linear>(fused->second)->forward(ctx, h);
-+                auto parts   = ggml_ext_chunk(ctx->ggml_ctx, gate_up, 2, 0);
++                auto parts   = ggml_ext_chunk(ctx, gate_up, 2, 0);
 +                h            = ggml_mul(ctx->ggml_ctx, parts[1], ggml_silu(ctx->ggml_ctx, parts[0]));
              } else {
-                 auto gate = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.gate_layer"])->forward(ctx, h);
-                 h         = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.proj"])->forward(ctx, h);
+@@ -299,2 +306,8 @@ namespace Qwen {
+             }
++            // the tile loader rounds activations to half anyway; narrowing first halves the
++            // bytes the down projection re-reads for every row block
++            static const bool down_f16_off = getenv("TOSH_QWEN21_DOWN_F16_DISABLE") != nullptr;
++            if (!down_f16_off && h->type == GGML_TYPE_F32) {
++                h = ggml_cast(ctx->ggml_ctx, h, GGML_TYPE_F16);
++            }
+             h = std::dynamic_pointer_cast<Linear>(blocks["img_mlp.out"])->forward(ctx, h);
