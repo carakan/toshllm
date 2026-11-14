@@ -375,6 +375,9 @@ build_image_engine() {
     git apply -p1 "$ROOT/patches/image/0060-image-qwen21-f16-inputs.patch"
     # The down projection takes its input in F16, which its tile loader rounds to anyway.
     git apply -p1 "$ROOT/patches/image/0061-image-qwen21-down-f16.patch"
+    # A one-token prompt comes back with its sequence dimension squeezed out, and the
+    # prompt-template asserts read the one-dimensional result as zero columns.
+    git apply -p1 "$ROOT/patches/image/0075-image-short-prompt-dims.patch"
 
     # The Metal port is a merged series, so a hunk can land on the wrong function and still
     # exit 0. Assert the markers that show the port took.

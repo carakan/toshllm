@@ -1,0 +1,32 @@
+diff --git a/src/conditioning/conditioner.hpp b/src/conditioning/conditioner.hpp
+index 31aa493..39269eb 100644
+--- a/src/conditioning/conditioner.hpp
++++ b/src/conditioning/conditioner.hpp
+@@ -2353,17 +2353,27 @@ struct LLMEmbedder : public Conditioner {
+             return {};
+         }
+         if (ph3_connector) {
+             hidden_states = ph3_connector->compute(n_threads, hidden_states);
+             if (hidden_states.empty()) {
+                 return {};
+             }
+         }
++        // A one-token prompt comes back with its trailing sequence dimension squeezed out,
++        // and the asserts below read the one-dimensional result as zero columns. The
++        // sequence has one token: give it its column back.
++        if (hidden_states.dim() == 1) {
++            hidden_states.unsqueeze_(1);
++        }
+         hidden_states = apply_token_weights(std::move(hidden_states), weights);
++        if (hidden_states.shape()[1] <= prompt_template_encode_start_idx) {
++            LOG_ERROR("prompt encoding produced %lld columns, the model's prompt template needs more than %d",
++                      (long long) hidden_states.shape()[1], prompt_template_encode_start_idx);
++        }
+         GGML_ASSERT(hidden_states.shape()[1] > prompt_template_encode_start_idx);
+ 
+         int64_t zero_pad_len = 0;
+         if (hidden_states_min_length > 0) {
+             if (hidden_states.shape()[1] - prompt_template_encode_start_idx < hidden_states_min_length) {
+                 zero_pad_len = hidden_states_min_length - hidden_states.shape()[1] + prompt_template_encode_start_idx;
+             }
+         }
