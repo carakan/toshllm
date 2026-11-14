@@ -56,6 +56,8 @@ take upstream master whole.
 | `0004-image-ggml-rope-apply.patch` | `ggml_rope_apply` (`GGML_OP_ROPE_APPLY`): applying a rotation the engine prepared earlier, with its CPU forward and dispatch |
 | `0012-image-qwen21-rope-table.patch` | the Qwen-Image 2.1 rope from the precomputed table: `ggml_rope_table` as a mode of `GGML_OP_ROPE`, its CPU forward and its Metal kernel, so the rotation is one pass over the table instead of the generic permute/repeat/multiply/add chain |
 | `0013-image-qwen21-bf16-f16-mul-mm.patch` | the `bf16` weights against `f16` inputs matmul kernel, which a runtime bf16 LoRA on Qwen-Image 2.1 asks for: read as half, exact for bf16 values in their range |
+| `0014-image-metal-mul-mm-kquant-w.patch` | the wide matmul tile for the K-quants: the `_w` instantiations the dispatcher's wide gate can select but the shaders never declared, which left a nil pipeline for the q6_K weights of MiniMax-H3-Image |
+| `0015-image-metal-nil-resource-guards.patch` | nil resource guards: the encoder stops with the kernel name and the tensor types instead of dereferencing a pipeline that never compiled, and a tensor that never landed in a Metal buffer aborts with its name instead of handing the driver a garbage buffer to fault on at address zero |
 
 The series is a merge of the ported `llama/metal/` series with upstream's newer ggml, so it is
 one patch per area rather than one per feature. `scripts/test-amd-metal-port.sh` checks it:

@@ -119,12 +119,25 @@ defined = set()
 for name in os.listdir(kernels):
     if not name.endswith(".metal"):
         continue
-    for m in re.finditer(r'host_name\("(kernel_[a-z0-9_]+)"\)',
+    for m in re.finditer(r'host_name\("(kernel_[A-Za-z0-9_]+)"\)',
                          open(os.path.join(kernels, name), encoding="utf-8", errors="replace").read()):
         defined.add(m.group(1))
 bad = []
 for want in ("kernel_mul_mm_f32_f32_w64", "kernel_mul_mv_iq1_m_f32_r1_w64", "kernel_mul_mm_f16_f32_w_w64"):
     if want not in defined:
+        bad.append(want)
+# Every weight type the matmul dispatcher's wide gate can select needs its 32-lane `_w`
+# kernel. The gate is the `switch (tsrc0)` right after `bool wide =` in the dispatcher;
+# a type listed there without an instantiation compiles to a nil pipeline and takes the
+# process down at address zero (this is how MiniMax-H3-Image's q6_K weights died).
+host = open(os.path.join(root, "ggml-metal-device.cpp"), encoding="utf-8", errors="replace").read()
+sw = host.index("switch (tsrc0)", host.index("bool wide ="))
+block = host[sw:host.index("snprintf(base", sw)]
+for t in re.findall(r'case GGML_TYPE_([A-Z0-9_]+):', block):
+    low = t.lower()
+    canon = {"BF16": "bf16e"}.get(t, low.replace("_k", "_K"))
+    want = "kernel_mul_mm_%s_f32_w" % canon
+    if want not in defined and "kernel_mul_mm_%s_f32_w" % low not in defined:
         bad.append(want)
 print("\n".join(bad))
 PY
@@ -133,7 +146,7 @@ if [ -n "$missing" ]; then
     print -r -- "$missing" | while read -r line; do fail "$line is missing from the kernels"; done
     fails=$((fails + $(print -r -- "$missing" | grep -c .)))
 else
-    ok "the wave64 kernels the AMD backend needs are there"
+    ok "the kernels the host names and the wide gate selects are there"
 fi
 
 # 4. The ggml-level API the Metal side calls is declared.

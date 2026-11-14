@@ -1,0 +1,84 @@
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
+index 710dd5c0..7e80f1de 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.cpp
++++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
+@@ -1397,16 +1397,22 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
+         ggml_metal_cv_set_bool(cv, acc_f32, FC_MUL_MM + 9);
+         ggml_metal_cv_set_bool(cv, uniform_scale, FC_MUL_MM + 10);
+ 
+         res = ggml_metal_library_compile_pipeline(lib, base, name, cv);
+ 
+         ggml_metal_cv_free(cv);
+     }
+ 
++    if (!res.pipeline) {
++        GGML_LOG_ERROR("%s: no Metal pipeline for %s (base %s, src0 %s, src1 %s)\n", __func__, name, base,
++                       ggml_type_name(tsrc0), ggml_type_name(tsrc1));
++        GGML_ABORT("ggml_metal: missing compute pipeline");
++    }
++
+     if (has_tensor) {
+         res.nr0 = NRA;
+         res.nr1 = NRB;
+ 
+         const size_t smem_a = NRA * N_MM_NK_TOTAL * sizeof(ggml_fp16_t);
+         res.smem = smem_a;
+     } else {
+         res.nr0 = 64;
+diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
+index 080ceae2..271e9c81 100644
+--- a/ggml/src/ggml-metal/ggml-metal-device.m
++++ b/ggml/src/ggml-metal/ggml-metal-device.m
+@@ -1109,16 +1109,26 @@ void ggml_metal_encoder_debug_group_push(ggml_metal_encoder_t encoder, const cha
+     }
+ }
+ 
+ void ggml_metal_encoder_debug_group_pop (ggml_metal_encoder_t encoder) {
+     [encoder->obj popDebugGroup];
+ }
+ 
+ void ggml_metal_encoder_set_pipeline(ggml_metal_encoder_t encoder, struct ggml_metal_pipeline_with_params pipeline) {
++    // a pipeline that never compiled comes back nil and its ->obj dereference takes the
++    // process down at address zero with nothing named; stop here with the cause instead
++    if (pipeline.pipeline == nil || pipeline.pipeline->obj == nil) {
++        GGML_LOG_ERROR("%s: compute pipeline is nil (kernel not built or build failed)\n", __func__);
++        GGML_ABORT("ggml_metal: nil compute pipeline state");
++    }
++    if (encoder->obj == nil) {
++        GGML_LOG_ERROR("%s: command encoder is nil\n", __func__);
++        GGML_ABORT("ggml_metal: nil command encoder");
++    }
+     [encoder->obj setComputePipelineState:pipeline.pipeline->obj];
+ }
+ 
+ void ggml_metal_encoder_set_bytes(ggml_metal_encoder_t encoder, void * data, size_t size, int idx) {
+     [encoder->obj setBytes:data length:size atIndex:idx];
+ }
+ 
+ void ggml_metal_encoder_set_buffer(ggml_metal_encoder_t encoder, struct ggml_metal_buffer_id buffer, int idx) {
+@@ -4508,16 +4518,25 @@ void ggml_metal_buffer_clear(ggml_metal_buffer_t buf, uint8_t value) {
+     }
+ }
+ 
+ struct ggml_metal_buffer_id ggml_metal_buffer_get_id(ggml_metal_buffer_t buf, const struct ggml_tensor * t) {
+     struct ggml_metal_buffer_id res = { nil, 0 };
+ 
+     const int64_t tsize = ggml_nbytes(t);
+ 
++    // a tensor the scheduler left outside every Metal buffer (a host-side custom-op weight
++    // that a GPU node reads, an allocation that never landed) would resolve against the
++    // wrong buffer type here and return garbage, which the driver then faults on at
++    // address zero; stop with the tensor named instead
++    if (buf == nil || buf->n_buffers < 0 || buf->n_buffers > GGML_METAL_MAX_BUFFERS) {
++        GGML_LOG_ERROR("%s: tensor '%s' (%s) does not live in a Metal buffer\n", __func__, t->name, ggml_type_name(t->type));
++        GGML_ABORT("ggml_metal: tensor is not in a Metal buffer");
++    }
++
+     // find the view that contains the tensor fully
+     for (int i = 0; i < buf->n_buffers; ++i) {
+         const int64_t ioffs = (int64_t) t->data - (int64_t) buf->buffers[i].data;
+ 
+         //GGML_LOG_INFO("ioffs = %10ld, tsize = %10ld, sum = %10ld, buf->buffers[%d].size = %10ld\n", ioffs, tsize, ioffs + tsize, i, buf->buffers[i].size);
+         if (ioffs >= 0 && ioffs + tsize <= (int64_t) buf->buffers[i].size) {
+             res.metal = buf->buffers[i].metal;
+             res.offs  = (size_t) ioffs;
