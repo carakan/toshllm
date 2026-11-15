@@ -378,6 +378,10 @@ build_image_engine() {
     # A one-token prompt comes back with its sequence dimension squeezed out, and the
     # prompt-template asserts read the one-dimensional result as zero columns.
     git apply -p1 "$ROOT/patches/image/0075-image-short-prompt-dims.patch"
+    # The residency refactor's capacity check fails a segment when system-wide free VRAM
+    # is short; the engine before it allocated anyway and macOS paged. Restore that as
+    # the last resort so a mostly-held card renders (slower) instead of erroring.
+    git apply -p1 "$ROOT/patches/image/0076-image-memory-oversubscribe-fallback.patch"
 
     # The Metal port is a merged series, so a hunk can land on the wrong function and still
     # exit 0. Assert the markers that show the port took.

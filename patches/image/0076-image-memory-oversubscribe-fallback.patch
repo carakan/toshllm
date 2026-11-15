@@ -1,0 +1,32 @@
+diff --git a/src/core/execution_engine.cpp b/src/core/execution_engine.cpp
+index 5ad241a..87bd53e 100644
+--- a/src/core/execution_engine.cpp
++++ b/src/core/execution_engine.cpp
+@@ -935,17 +935,26 @@ namespace sd {
+                                       : sd_format("%.2f MB", available.available_device_bytes / (1024.0 * 1024.0));
+         const auto budget_bytes = available.available_budget_bytes == SIZE_MAX
+                                       ? std::string("unlimited")
+                                       : sd_format("%.2f MB", available.available_budget_bytes / (1024.0 * 1024.0));
+         LOG_WARN("execution engine cannot make enough memory available on %s: need %.2f MB device / %.2f MB budget, available %s device / %s budget",
+                  ggml_backend_name(request.compute_backend),
+                  available.required_device_bytes / (1024.0 * 1024.0),
+                  available.required_budget_bytes / (1024.0 * 1024.0), device_bytes.c_str(), budget_bytes.c_str());
+-        return false;
++        // The engine before the residency refactor had no capacity gate: it allocated
++        // anyway and macOS paged VRAM resources to system RAM under pressure, which
++        // rendered fine with the card mostly held (browsers and other apps included).
++        // Keep that behavior as the last resort instead of failing the segment: the
++        // staging allocation below either pages like before, or fails with the real
++        // allocation error rather than this estimate.
++        LOG_WARN("execution engine oversubscribing %s: need %.2f MB device, %s free; continuing, the render pages under pressure",
++                 ggml_backend_name(request.compute_backend),
++                 available.required_device_bytes / (1024.0 * 1024.0), device_bytes.c_str());
++        return true;
+     }
+ 
+     void ExecutionEngine::clear_cache(ExecutionSession& session) {
+         session.cache_.clear();
+         sync_residency(session);
+     }
+ 
+     void ExecutionEngine::discard_graph(ExecutionSession& session) {
