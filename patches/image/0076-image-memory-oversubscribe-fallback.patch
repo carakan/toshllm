@@ -1,8 +1,8 @@
 diff --git a/src/core/execution_engine.cpp b/src/core/execution_engine.cpp
-index 5ad241a..87bd53e 100644
+index 5ad241a..5bfd2e4 100644
 --- a/src/core/execution_engine.cpp
 +++ b/src/core/execution_engine.cpp
-@@ -935,17 +935,26 @@ namespace sd {
+@@ -935,17 +935,35 @@ namespace sd {
                                        : sd_format("%.2f MB", available.available_device_bytes / (1024.0 * 1024.0));
          const auto budget_bytes = available.available_budget_bytes == SIZE_MAX
                                        ? std::string("unlimited")
@@ -18,6 +18,15 @@ index 5ad241a..87bd53e 100644
 +        // Keep that behavior as the last resort instead of failing the segment: the
 +        // staging allocation below either pages like before, or fails with the real
 +        // allocation error rather than this estimate.
++        // A sane margin keeps the last resort from becoming unbounded: past total minus
++        // a 2 GB reserve the paging cost dominates and the estimate is more likely
++        // wrong than the device is magically spacious, so keep the refusal there.
++        size_t device_total = 0, device_free = 0;
++        ggml_backend_dev_memory(ggml_backend_get_device(request.compute_backend), &device_free, &device_total);
++        constexpr size_t kOversubscribeReserve = 2ull * 1024ull * 1024ull * 1024ull;
++        if (device_total != 0 && available.required_device_bytes + kOversubscribeReserve > device_total) {
++            return false;
++        }
 +        LOG_WARN("execution engine oversubscribing %s: need %.2f MB device, %s free; continuing, the render pages under pressure",
 +                 ggml_backend_name(request.compute_backend),
 +                 available.required_device_bytes / (1024.0 * 1024.0), device_bytes.c_str());
