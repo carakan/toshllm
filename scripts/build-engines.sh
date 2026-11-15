@@ -449,4 +449,11 @@ fi
 # 3. Image engine (stable-diffusion.cpp; skip with SKIP_IMAGE=1)
 if [ -z "$SKIP_IMAGE" ]; then
     build_image_engine
+    # The only must-work model renders on every build; a change that breaks
+    # Qwen-Image fails the build instead of reaching ComfyUI. Skip with
+    # SKIP_QWEN_IMAGE_TEST=1; the gate skips itself when the models are absent.
+    if [ -z "$SKIP_QWEN_IMAGE_TEST" ]; then
+        echo "Qwen-Image 2.1 gate"
+        "$ROOT/scripts/test-qwen-image.sh"
+    fi
 fi
