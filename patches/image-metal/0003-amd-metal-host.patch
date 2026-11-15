@@ -7915,7 +7915,7 @@ index 44519903..5cf1dfe8 100644
 +            if (has_simdgroup_reduction) {
 +                return ggml_metal_supports_mul_mat_op(
 +                        has_simdgroup_reduction, op, true,
-+                        ggml_metal_op_mul_mat_use_mm(op, has_simdgroup_mm));
++                        ggml_metal_op_mul_mat_use_mm(op, has_simdgroup_mm || use_mm_manual));
 +            }
 +            // wave64 prefill: the manual tiled mul_mm (batched). Mirror the dispatch check.
 +            const bool prefill =

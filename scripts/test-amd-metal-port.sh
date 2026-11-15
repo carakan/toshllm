@@ -183,7 +183,41 @@ for table in ("GGML_OP_NAME", "GGML_OP_SYMBOL"):
         print(f"  ok: {table} has one entry per op ({len(rows)})")
 PY
 
-# 6. With --build, the ported ggml compiles and the backend op tests pass on the Metal
+# 6. The matmul support gate and the dispatch gate make the same decision about the manual
+#    tiled matmul. On a device without simdgroup_matrix (every AMD card) the dispatcher runs
+#    an F16-input matmul on the manual tile: ggml-metal-ops.cpp passes
+#    `has_simdgroup_mm || use_mm_manual` to ggml_metal_op_mul_mat_use_mm. A support check
+#    passing `has_simdgroup_mm` alone claims those matmuls unsupported on such a card, and
+#    the graph-cut workspace measure — whose scheduler holds only the GPU backend — has no
+#    backend to assign them to and aborts in ggml_backend_sched_split_graph before the first
+#    sampling step. That is how every Qwen-Image 2.1 run died: its q/k/v projections take
+#    F16 inputs (the F16-input patches), while MiniMax-H3's F32 activations never reach the
+#    gate and always passed.
+echo
+echo "the matmul support gate mirrors the dispatch gate"
+mismatch=$(python3 - "$WORK/ggml/src/ggml-metal" <<'PY'
+import os, re, sys
+root = sys.argv[1]
+bad = []
+for name in ("ggml-metal-device.m", "ggml-metal-ops.cpp"):
+    text = open(os.path.join(root, name), encoding="utf-8", errors="replace").read()
+    sites = re.findall(r"ggml_metal_op_mul_mat_use_mm\(op, ([^)]*)\)", text)
+    if not sites:
+        bad.append("%s: no ggml_metal_op_mul_mat_use_mm call site" % name)
+    for args in sites:
+        if "use_mm_manual" not in args:
+            bad.append("%s: ggml_metal_op_mul_mat_use_mm(%s) ignores use_mm_manual" % (name, args))
+print("\n".join(bad))
+PY
+)
+if [ -n "$mismatch" ]; then
+    print -r -- "$mismatch" | while read -r line; do fail "$line"; done
+    fails=$((fails + $(print -r -- "$mismatch" | grep -c .)))
+else
+    ok "the support check claims exactly what the dispatcher runs"
+fi
+
+# 7. With --build, the ported ggml compiles and the backend op tests pass on the Metal
 #    device. The shaders are embedded, so a kernel that does not compile fails the build
 #    rather than the first model load.
 if [ "$BUILD" = 1 ]; then
